@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { FolderOpen, Disc, Settings, Link2, Search, ActivitySquare } from 'lucide-react';
 import { Logo } from './Logo';
 
@@ -11,45 +11,15 @@ interface NavigationProps {
 }
 
 export const Navigation: React.FC<NavigationProps> = ({ activePage, onNavigate }) => {
-  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
-
-  useEffect(() => {
-    const handleResize = () => setIsMobile(window.innerWidth < 768);
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
-
   const navItems: { id: Page; icon: React.ElementType; label: string }[] = [
-    { id: 'player', icon: Disc, label: 'Player' },
+    { id: 'player', icon: Disc, label: 'Now Playing' },
     { id: 'files', icon: FolderOpen, label: 'Library' },
     { id: 'search', icon: Search, label: 'Search' },
-    { id: 'audiophile', icon: ActivitySquare, label: 'Audio' },
-    { id: 'connect', icon: Link2, label: 'Net' },
-    { id: 'settings', icon: Settings, label: 'Setup' },
+    { id: 'audiophile', icon: ActivitySquare, label: 'Audiophile' },
+    { id: 'connect', icon: Link2, label: 'Connect' },
+    { id: 'settings', icon: Settings, label: 'Settings' },
   ];
 
-  if (isMobile) {
-      // MOBILE LAYOUT: Bottom Tab Bar (iOS Style)
-      return (
-        <div className="fixed bottom-0 left-0 right-0 h-20 bg-neutral-950/90 backdrop-blur-xl border-t border-white/10 z-[90] flex items-center justify-around px-2 pb-safe">
-            {navItems.map((item) => {
-                const isActive = activePage === item.id;
-                return (
-                    <button
-                        key={item.id}
-                        onClick={() => onNavigate(item.id)}
-                        className={`flex flex-col items-center justify-center gap-1 w-full h-full ${isActive ? 'text-primary-500' : 'text-neutral-500'}`}
-                    >
-                        <item.icon size={22} strokeWidth={isActive ? 2.5 : 1.5} />
-                        <span className="text-[9px] font-medium">{item.label}</span>
-                    </button>
-                )
-            })}
-        </div>
-      );
-  }
-
-  // DESKTOP LAYOUT: Sidebar (Mac/Windows Style)
   return (
     <div className="w-20 h-full bg-transparent flex flex-col items-center py-6 z-50 relative shrink-0 border-r border-white/0">
       <div className="mb-8 mt-2">

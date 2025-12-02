@@ -1,4 +1,5 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Track, AudioState, PlaybackMode, EqualizerBand, DEFAULT_EQ_BANDS, ThemeColor, EQ_PRESETS } from './types';
 import { Controls } from './components/Controls';
 import { Visualizer } from './components/Visualizer';
@@ -12,27 +13,22 @@ import { AudiophilePage } from './pages/AudiophilePage';
 import { Equalizer } from './components/Equalizer';
 import { Toast } from './components/Toast';
 import { QueueDrawer } from './components/QueueDrawer';
-import { Sparkles, Sliders, Waves, AudioWaveform, Zap } from 'lucide-react';
+import { Sparkles, FileDigit, Shrink, Sliders, Activity, Disc } from 'lucide-react';
 import { getTrackInsight } from './services/geminiService';
-import 'jsmediatags';
+import { Logo } from './components/Logo';
+import { NativeAudioService } from './services/nativeAudio';
 
-// Enforce types for window globals
-declare global {
-    interface Window {
-        jsmediatags?: any;
-    }
-}
-
-type Page = 'player' | 'files' | 'settings' | 'connect' | 'search' | 'audiophile';
+type Page = 'files' | 'player' | 'settings' | 'connect' | 'search' | 'audiophile';
 
 const App: React.FC = () => {
-  const [activePage, setActivePage] = useState<Page>('player'); // Player is Default
+  // DEFAULT PAGE IS NOW PLAYER
+  const [activePage, setActivePage] = useState<Page>('player');
   const [tracks, setTracks] = useState<Track[]>([]);
   const [currentTrackIndex, setCurrentTrackIndex] = useState<number>(-1);
   const [showEq, setShowEq] = useState(false);
   const [showQueue, setShowQueue] = useState(false);
+  const [isFullPlayer, setIsFullPlayer] = useState(true); // Default to full player view
   
-  // Audio Engine State
   const [audioState, setAudioState] = useState<AudioState>({
     isPlaying: false,
     currentTime: 0,
@@ -40,10 +36,10 @@ const App: React.FC = () => {
     volume: 1,
     isMuted: false,
     playbackRate: 1.0,
-    isPuristMode: true, // Default to Purist (Bit Perfect Intent)
-    sampleRate: 44100, 
+    isPuristMode: true, // Default to Bit-Perfect mode
+    sampleRate: 44100,
     bufferSize: 2048,
-    processingPrecision: '32-bit float'
+    processingPrecision: '32-bit float' 
   });
 
   const [playbackMode, setPlaybackMode] = useState<PlaybackMode>(PlaybackMode.SEQUENCE);
@@ -51,497 +47,426 @@ const App: React.FC = () => {
   const [isLoadingInsight, setIsLoadingInsight] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [toastMsg, setToastMsg] = useState("");
-  const [mouseIdle, setMouseIdle] = useState(false);
   
   const [eqBands, setEqBands] = useState<EqualizerBand[]>(DEFAULT_EQ_BANDS.map(b => ({...b})));
   const [currentPresetId, setCurrentPresetId] = useState<string>('manual');
-  const [currentThemeId, setCurrentThemeId] = useState('reference');
+  const [currentThemeId, setCurrentThemeId] = useState('immersive');
   
-  // Audio Refs - The Core Engine
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const isTauri = useMemo(() => !!(window as any).__TAURI__, []);
+
+  const [bgImageLayer1, setBgImageLayer1] = useState<string | null>(null);
+  const [bgImageLayer2, setBgImageLayer2] = useState<string | null>(null);
+  const [activeLayer, setActiveLayer] = useState<1 | 2>(1);
+
   const audioRef = useRef<HTMLAudioElement>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const sourceNodeRef = useRef<MediaElementAudioSourceNode | null>(null);
   const eqNodesRef = useRef<BiquadFilterNode[]>([]);
   const analyserNodeRef = useRef<AnalyserNode | null>(null);
-  const gainNodeRef = useRef<GainNode | null>(null);
-  const mouseTimer = useRef<number>(0);
+  const gainNodeRef = useRef<GainNode | null>(null); 
 
-  const currentTrack = tracks[currentTrackIndex];
+  const showToast = (message: string) => {
+    setToastMsg(message);
+  };
 
-  // --- MOUSE IDLE (Cinematic Feel) ---
+  // --- AUDIO ENGINE ---
   useEffect(() => {
-    const handleMove = () => {
-        setMouseIdle(false);
-        if(mouseTimer.current) clearTimeout(mouseTimer.current);
-        mouseTimer.current = setTimeout(() => {
-            if (audioState.isPlaying && !showQueue && !showEq && !isDragging) setMouseIdle(true);
-        }, 4000);
-    };
-    window.addEventListener('mousemove', handleMove);
-    return () => window.removeEventListener('mousemove', handleMove);
-  }, [audioState.isPlaying, showQueue, showEq, isDragging]);
+    if (currentTrackIndex !== -1 && tracks[currentTrackIndex]) {
+      const track = tracks[currentTrackIndex];
+      
+      let newUrl = '';
+      if (track.path && (track.path.startsWith('http') || track.path.startsWith('blob:'))) {
+          newUrl = track.path;
+      } else {
+          newUrl = URL.createObjectURL(track.file);
+      }
+      
+      setBlobUrl(newUrl);
 
-  // --- AUDIO GRAPH INITIALIZATION ---
+      // Transitions
+      const newImage = track.image || null;
+      if (activeLayer === 1) {
+          setBgImageLayer2(newImage);
+          setActiveLayer(2);
+      } else {
+          setBgImageLayer1(newImage);
+          setActiveLayer(1);
+      }
+      
+      if(audioRef.current) {
+          audioRef.current.src = newUrl;
+          if(audioState.isPlaying) audioRef.current.play().catch(() => {});
+      }
+
+      if (audioState.isPuristMode && isTauri && track.path && !track.path.startsWith('http')) {
+          NativeAudioService.play(track.path).then(success => {
+              if (success && audioRef.current) {
+                  audioRef.current.volume = 0; 
+              }
+          });
+      }
+
+      return () => {
+        if (!newUrl.startsWith('http')) URL.revokeObjectURL(newUrl); 
+        if (isTauri && audioState.isPuristMode) NativeAudioService.stop();
+      };
+    }
+  }, [currentTrackIndex, tracks, audioState.isPuristMode, isTauri]);
+
+  const reconnectGraph = useCallback(() => {
+    const ctx = audioContextRef.current;
+    if (!ctx || !sourceNodeRef.current || !analyserNodeRef.current || !gainNodeRef.current) return;
+
+    const source = sourceNodeRef.current;
+    const analyser = analyserNodeRef.current;
+    const gainNode = gainNodeRef.current;
+    const destination = ctx.destination;
+
+    try {
+        source.disconnect();
+        eqNodesRef.current.forEach(n => n.disconnect());
+        analyser.disconnect();
+        gainNode.disconnect();
+    } catch(e) { }
+
+    let currentNode: AudioNode = source;
+
+    if (!audioState.isPuristMode) {
+      if (eqNodesRef.current.length === 0) {
+        eqNodesRef.current = eqBands.map(band => {
+            const filter = ctx.createBiquadFilter();
+            filter.type = 'peaking';
+            filter.frequency.value = band.frequency;
+            filter.gain.value = band.gain;
+            filter.Q.value = 1; 
+            return filter;
+        });
+      }
+      eqNodesRef.current.forEach(filter => {
+          currentNode.connect(filter);
+          currentNode = filter;
+      });
+    }
+
+    currentNode.connect(gainNode);
+    gainNode.connect(analyser);
+    analyser.connect(destination);
+
+  }, [audioState.isPuristMode, eqBands]);
+
   useEffect(() => {
       if (!audioRef.current) return;
-      
-      const initAudio = () => {
+      const initAudioGraph = () => {
           if (!audioContextRef.current) {
-              const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-              // latencyHint 'playback' favors buffer stability over latency (good for music)
-              audioContextRef.current = new AudioCtx({ latencyHint: 'playback' });
-              
-              setAudioState(prev => ({ ...prev, sampleRate: audioContextRef.current?.sampleRate || 44100 }));
-              
-              analyserNodeRef.current = audioContextRef.current.createAnalyser();
-              analyserNodeRef.current.fftSize = 4096; // 4096 for High Res RTA
-              analyserNodeRef.current.smoothingTimeConstant = 0.8;
-              
-              gainNodeRef.current = audioContextRef.current.createGain();
+             const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+             audioContextRef.current = new AudioContext({ latencyHint: 'playback' });
           }
-
           const ctx = audioContextRef.current;
           if (ctx.state === 'suspended') ctx.resume();
-
+          setAudioState(prev => ({...prev, sampleRate: ctx.sampleRate}));
           if (!sourceNodeRef.current) {
-               try {
-                  sourceNodeRef.current = ctx.createMediaElementSource(audioRef.current);
-               } catch(e) { /* Prevent double connection error */ }
+              try { sourceNodeRef.current = ctx.createMediaElementSource(audioRef.current); } catch (e) { return; }
           }
-
-          // Create EQ Nodes if missing
-          if (eqNodesRef.current.length === 0) {
-              eqNodesRef.current = eqBands.map(band => {
-                  const filter = ctx.createBiquadFilter();
-                  filter.type = 'peaking';
-                  filter.frequency.value = band.frequency;
-                  filter.gain.value = band.gain;
-                  filter.Q.value = 1.0;
-                  return filter;
-              });
+          if (!analyserNodeRef.current) {
+              analyserNodeRef.current = ctx.createAnalyser();
+              analyserNodeRef.current.fftSize = 8192; 
+              analyserNodeRef.current.smoothingTimeConstant = 0.85;
           }
-
-          // --- ROUTING MATRIX ---
-          const source = sourceNodeRef.current!;
-          const analyser = analyserNodeRef.current!;
-          const gain = gainNodeRef.current!;
-          const eqNodes = eqNodesRef.current;
-
-          // 1. Disconnect everything first
-          source.disconnect();
-          eqNodes.forEach(n => n.disconnect());
-          analyser.disconnect();
-          gain.disconnect();
-
-          if (audioState.isPuristMode) {
-              // --- PURIST PATH (BIT PERFECT INTENT) ---
-              // Source -> Gain -> Destination
-              // We tap the Analyser off the Source, but it DOES NOT go to Destination.
-              // This ensures the audio you hear is untouched by the Analyser node logic.
-              source.connect(gain);
-              gain.connect(ctx.destination);
-              
-              // Visualization Tap (Sidechain)
-              source.connect(analyser); 
-          } else {
-              // --- DSP PATH ---
-              // Source -> EQ -> Gain -> Analyser -> Destination
-              let currentNode: AudioNode = source;
-              eqNodes.forEach(filter => {
-                  currentNode.connect(filter);
-                  currentNode = filter;
-              });
-              currentNode.connect(gain);
-              gain.connect(analyser);
-              analyser.connect(ctx.destination);
+          if (!gainNodeRef.current) {
+              gainNodeRef.current = ctx.createGain();
+              gainNodeRef.current.gain.value = 1.0;
           }
+          reconnectGraph();
       };
+      if (audioState.isPlaying) initAudioGraph();
+      document.addEventListener('click', initAudioGraph, { once: true });
+  }, [audioState.isPlaying, reconnectGraph]);
 
-      // Ensure AudioContext is started by user interaction
-      document.addEventListener('click', initAudio, { once: true });
-      initAudio();
-
-  }, [audioState.isPuristMode]);
-
-  // Update EQ Gains Real-time
   useEffect(() => {
-      const ctx = audioContextRef.current;
-      if (!ctx) return;
-      eqNodesRef.current.forEach((node, i) => {
-          if (node && eqBands[i]) {
-              node.gain.setTargetAtTime(eqBands[i].gain, ctx.currentTime, 0.1);
-          }
-      });
-  }, [eqBands]);
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (audioState.isPlaying) { 
+        audio.play().catch(console.warn); 
+        if (isTauri && audioState.isPuristMode) NativeAudioService.resume(); 
+    } else { 
+        audio.pause(); 
+        if (isTauri && audioState.isPuristMode) NativeAudioService.pause(); 
+    }
+  }, [audioState.isPlaying, isTauri, audioState.isPuristMode]);
 
-  const showToast = (msg: string) => setToastMsg(msg);
-
-  // --- METADATA EXTRACTION ---
-  const extractMetadata = async (file: File): Promise<Partial<Track>> => {
-      return new Promise((resolve) => {
-          const meta: Partial<Track> = {};
-          if (!window.jsmediatags) { resolve(meta); return; }
-
-          window.jsmediatags.read(file, {
-              onSuccess: (tag: any) => {
-                  if (tag.tags.title) meta.name = tag.tags.title;
-                  if (tag.tags.artist) meta.artist = tag.tags.artist;
-                  if (tag.tags.album) meta.album = tag.tags.album;
-                  
-                  if (tag.tags.picture) {
-                      const { data, format } = tag.tags.picture;
-                      // Convert binary array to base64 string safely
-                      let base64String = "";
-                      for (let i = 0; i < data.length; i++) {
-                          base64String += String.fromCharCode(data[i]);
-                      }
-                      meta.image = `data:${format};base64,${window.btoa(base64String)}`;
-                  }
-                  resolve(meta);
-              },
-              onError: () => resolve(meta)
-          });
-      });
-  };
-
-  const processFiles = async (files: FileList | File[]) => {
-    const newTracks: Track[] = [];
-    
-    for (const file of Array.from(files)) {
-        // Strict Audio Filter
-        const ext = file.name.split('.').pop()?.toLowerCase();
-        if (!['mp3','flac','wav','ogg','aac','m4a','aiff','dsf','dff'].includes(ext || '')) continue;
-
-        const baseMeta = {
-             id: crypto.randomUUID(),
-             file,
-             name: file.name.replace(/\.[^/.]+$/, ""),
-             artist: "Unknown Artist",
-             format: ext?.toUpperCase() || "RAW",
-             dateAdded: Date.now(),
-             bitrate: Math.round(file.size / 1024 / 3), // Rough estimation
-        };
-
-        const deepMeta = await extractMetadata(file);
-        
-        // Quick duration check
-        const tempUrl = URL.createObjectURL(file);
-        const tempAudio = new Audio(tempUrl);
-        const duration = await new Promise<number>((resolve) => {
-            tempAudio.onloadedmetadata = () => resolve(tempAudio.duration);
-            tempAudio.onerror = () => resolve(0);
+  useEffect(() => {
+      if (!audioState.isPuristMode && audioContextRef.current) {
+        eqNodesRef.current.forEach((node, i) => {
+            if (node && eqBands[i]) {
+                node.gain.setValueAtTime(eqBands[i].gain, audioContextRef.current?.currentTime || 0);
+            }
         });
-        URL.revokeObjectURL(tempUrl);
-
-        newTracks.push({ ...baseMeta, ...deepMeta, duration } as Track);
-    }
-
-    if (newTracks.length > 0) {
-        setTracks(prev => [...prev, ...newTracks]);
-        showToast(`Imported ${newTracks.length} tracks`);
-        if (tracks.length === 0) {
-             setCurrentTrackIndex(0);
-             setAudioState(prev => ({...prev, isPlaying: true }));
-        }
-    }
-  };
-
-  // --- GLOBAL DRAG AND DROP ---
-  const handleDragDrop = useCallback((e: DragEvent) => {
-      e.preventDefault();
-      setIsDragging(false);
-      if (e.dataTransfer?.files) processFiles(e.dataTransfer.files);
-  }, [tracks]);
-
-  useEffect(() => {
-      window.addEventListener('drop', handleDragDrop);
-      window.addEventListener('dragover', (e) => { e.preventDefault(); setIsDragging(true); });
-      window.addEventListener('dragleave', (e) => { e.preventDefault(); setIsDragging(false); });
-      return () => {
-          window.removeEventListener('drop', handleDragDrop);
-      };
-  }, [handleDragDrop]);
-
-  // --- CONTROLS LOGIC ---
-  const handleNext = () => {
-     if (tracks.length === 0) return;
-     let nextIdx = currentTrackIndex + 1;
-     if (playbackMode === PlaybackMode.SHUFFLE) nextIdx = Math.floor(Math.random() * tracks.length);
-     if (nextIdx >= tracks.length) nextIdx = 0;
-     setCurrentTrackIndex(nextIdx);
-     setAudioState(s => ({ ...s, isPlaying: true }));
-  };
-
-  const handlePrev = () => {
-      if (audioRef.current && audioRef.current.currentTime > 3) {
-          audioRef.current.currentTime = 0;
-          return;
       }
-      let prev = currentTrackIndex - 1;
-      if (prev < 0) prev = tracks.length - 1;
-      setCurrentTrackIndex(prev);
-      setAudioState(s => ({ ...s, isPlaying: true }));
+  }, [eqBands, audioState.isPuristMode]);
+
+  const handleImportPlaylist = (newTracks: Track[], name: string) => {
+      setTracks(prev => [...prev, ...newTracks]);
+      showToast(`Imported "${name}" (${newTracks.length} tracks)`);
+      if (currentTrackIndex === -1 && newTracks.length > 0) {
+          setCurrentTrackIndex(tracks.length); 
+          setAudioState(prev => ({...prev, isPlaying: true}));
+      }
+  };
+
+  const processFiles = async (files: File[] | FileList) => {
+      const fileList = Array.from(files);
+      const initialTracks: Track[] = fileList.map(file => ({
+          id: crypto.randomUUID(), 
+          file, 
+          path: (file as any).path, 
+          name: file.name.replace(/\.[^/.]+$/, ""), 
+          artist: "Unknown Artist", 
+          format: file.name.split('.').pop()?.toUpperCase() || "RAW", 
+          isLiked: false, 
+          dateAdded: Date.now(), 
+          fileSize: file.size, 
+          source: 'local'
+      }));
+      setTracks(prev => [...prev, ...initialTracks]);
+      showToast(`Imported ${fileList.length} tracks`);
   };
 
   const handlePlayPause = () => {
-      if (currentTrackIndex === -1 && tracks.length > 0) setCurrentTrackIndex(0);
-      setAudioState(s => ({ ...s, isPlaying: !s.isPlaying }));
+      if (currentTrackIndex === -1 && tracks.length > 0) { 
+          setCurrentTrackIndex(0); 
+          setAudioState(prev => ({ ...prev, isPlaying: true })); 
+      } else if (currentTrackIndex !== -1) { 
+          setAudioState(prev => ({ ...prev, isPlaying: !prev.isPlaying })); 
+      }
   };
 
-  // Handle Playback State
-  useEffect(() => {
-      const audio = audioRef.current;
-      if(!audio) return;
-      
-      if(currentTrack) {
-          // Determine source URL
-          const url = currentTrack.source === 'youtube' && currentTrack.path 
-            ? currentTrack.path 
-            : URL.createObjectURL(currentTrack.file);
-            
-          audio.src = url;
-          audio.playbackRate = audioState.playbackRate;
-          
-          if(audioState.isPlaying) {
-              const playPromise = audio.play();
-              if (playPromise !== undefined) {
-                  playPromise.catch(error => console.warn("Playback prevented:", error));
-              }
-          }
-          
-          return () => { 
-              if(currentTrack.source !== 'youtube') URL.revokeObjectURL(url); 
-          };
+  const handleNext = useCallback((force: boolean = false) => {
+    if (tracks.length === 0) return;
+    if (playbackMode === PlaybackMode.SHUFFLE) {
+         setCurrentTrackIndex(Math.floor(Math.random() * tracks.length));
+    } else {
+         setCurrentTrackIndex(prev => (prev + 1) % tracks.length);
+    }
+    setAudioState(prev => ({ ...prev, isPlaying: true }));
+  }, [tracks.length, playbackMode]);
+
+  const handlePrev = () => {
+    if (tracks.length === 0) return;
+    if (audioRef.current && audioRef.current.currentTime > 3) { audioRef.current.currentTime = 0; return; }
+    setCurrentTrackIndex(prev => (prev - 1 + tracks.length) % tracks.length);
+    setAudioState(prev => ({ ...prev, isPlaying: true }));
+  };
+
+  const handleSeek = (time: number) => {
+      if (audioRef.current) {
+          audioRef.current.currentTime = time;
+          setAudioState(prev => ({ ...prev, currentTime: time }));
+          if (isTauri && audioState.isPuristMode) NativeAudioService.seek(time);
       }
-  }, [currentTrackIndex]); 
+  };
 
-  useEffect(() => {
-      if(audioRef.current) {
-          if(audioState.isPlaying) audioRef.current.play().catch(() => {});
-          else audioRef.current.pause();
-      }
-  }, [audioState.isPlaying]);
-
-  useEffect(() => {
-      if(audioRef.current) audioRef.current.volume = audioState.isMuted ? 0 : audioState.volume;
-  }, [audioState.volume, audioState.isMuted]);
-
-  // AI Insights
   const generateInsight = async () => {
-      if (!currentTrack) return;
+      if (currentTrackIndex === -1) return;
       setIsLoadingInsight(true);
-      const text = await getTrackInsight(currentTrack.artist, currentTrack.name);
+      const track = tracks[currentTrackIndex];
+      const text = await getTrackInsight(track.artist, track.name);
       setAiInsight(text);
       setIsLoadingInsight(false);
   };
 
-  // --- RENDER SECTION ---
-  const renderContent = () => {
-      switch (activePage) {
-          case 'files':
-              return <FilesPage 
-                  tracks={tracks} 
-                  onPlay={(t) => { setCurrentTrackIndex(tracks.indexOf(t)); setAudioState(s => ({...s, isPlaying: true})); setActivePage('player'); }}
-                  onUpload={(e) => { if(e.target.files) processFiles(e.target.files); }}
-                  onPlayNext={(id) => { const idx = tracks.findIndex(t => t.id === id); if(idx !== -1) { /* Logic handled by queue usually */ showToast("Queued Next"); }}}
-                  onAddToQueue={(id) => showToast("Added to Queue")}
-                  onRemove={(id) => setTracks(prev => prev.filter(t => t.id !== id))}
-              />;
-          case 'search':
-              return <SearchPage tracks={tracks} onPlay={(t) => {
-                  setTracks(prev => [t, ...prev]); setCurrentTrackIndex(0); setAudioState(s => ({...s, isPlaying: true})); setActivePage('player');
-              }} />;
-          case 'audiophile':
-              return <AudiophilePage analyserNode={analyserNodeRef.current} sampleRate={audioState.sampleRate} />;
-          case 'connect':
-              return <ConnectPage onPlayUrl={(url) => { /* stream logic */ }} />;
-          case 'settings':
-              return <SettingsPage 
-                 currentThemeId={currentThemeId} 
-                 onThemeChange={(t) => {
-                     setCurrentThemeId(t.id);
-                     document.documentElement.style.setProperty('--primary-500', t.colors[500]);
-                     document.documentElement.style.setProperty('--primary-900', t.colors[900]);
-                 }} 
-                 isPuristMode={audioState.isPuristMode}
-                 onTogglePurist={() => setAudioState(s => ({...s, isPuristMode: !s.isPuristMode}))}
-                 onTogglePrecision={() => setAudioState(s => ({...s, processingPrecision: s.processingPrecision === '16-bit' ? '32-bit float' : '16-bit'}))}
-              />;
-          case 'player':
-          default:
-              // --- THE PLAYER UI ---
-              return (
-                <div className="h-full flex flex-col items-center justify-center p-6 relative overflow-hidden">
-                    {/* Cinematic Background Blur */}
-                    {currentTrack && (
-                        <div className="absolute inset-0 z-0 select-none pointer-events-none">
-                            <div className="absolute inset-0 bg-black/50 z-10" />
-                            <img src={currentTrack.image} className="w-full h-full object-cover blur-[120px] opacity-40 scale-125" />
-                        </div>
-                    )}
-                    
-                    <div className="z-10 w-full max-w-7xl h-full flex flex-col md:flex-row gap-8 items-center justify-center">
-                        {/* Center Stage: Visualizer / Art */}
-                        <div className="flex-1 w-full max-h-[75vh] aspect-square max-w-[800px] relative group">
-                            <div className="absolute inset-0 bg-gradient-to-tr from-white/5 to-transparent rounded-[2rem] border border-white/10 shadow-2xl backdrop-blur-sm overflow-hidden">
-                                
-                                {/* Background Art Fade */}
-                                {currentTrack?.image && (
-                                    <div className="absolute inset-0 z-0 opacity-20 group-hover:opacity-10 transition-opacity duration-1000">
-                                         <img src={currentTrack.image} className="w-full h-full object-cover" />
-                                    </div>
-                                )}
-                                
-                                <Visualizer isPlaying={audioState.isPlaying} analyser={analyserNodeRef.current} />
-                                
-                                {/* Idle State */}
-                                {!audioState.isPlaying && (
-                                    <div className="absolute inset-0 flex items-center justify-center">
-                                        <div className="p-8 rounded-full bg-white/5 backdrop-blur-md border border-white/10 shadow-lg">
-                                            <Sparkles className="text-white/40" size={64} strokeWidth={1} />
-                                        </div>
-                                    </div>
-                                )}
+  const currentTrack = tracks[currentTrackIndex];
+  const isImmersive = currentThemeId === 'immersive';
+  
+  const NowPlayingView = () => (
+    <div className="h-full flex flex-col p-6 animate-in fade-in duration-500 justify-center">
+         <div className="flex gap-12 items-center justify-center max-w-6xl mx-auto w-full">
+             
+             {/* Art & Viz */}
+             <div className="w-[40vw] max-w-[500px] aspect-square rounded-[32px] overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.5)] relative group bg-neutral-900 border border-white/10 ring-1 ring-white/5">
+                 {currentTrack?.image ? (
+                     <img src={currentTrack.image} className="w-full h-full object-cover transition-transform duration-[10s] ease-linear group-hover:scale-105" />
+                 ) : (
+                     <Visualizer isPlaying={audioState.isPlaying} analyser={analyserNodeRef.current} />
+                 )}
+                 <button 
+                    onClick={() => { setActivePage('files'); setIsFullPlayer(false); }}
+                    className="absolute top-4 right-4 p-2.5 bg-black/40 hover:bg-black/80 backdrop-blur-xl rounded-full text-white opacity-0 group-hover:opacity-100 transition-all border border-white/10"
+                    title="Minimize"
+                >
+                    <Shrink size={18} />
+                </button>
+             </div>
+             
+             {/* Info & Tools */}
+             <div className="flex-1 max-w-md space-y-8">
+                 <div className="space-y-2">
+                     <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-white leading-[1.1] drop-shadow-2xl">
+                         {currentTrack?.name || "Rawh Player"}
+                     </h1>
+                     <p className="text-2xl text-white/60 font-light tracking-wide">{currentTrack?.artist || "Ready to Play"}</p>
+                 </div>
 
-                                {/* Top Info Area */}
-                                <div className="absolute top-8 left-8 right-8 flex justify-between items-start pointer-events-none">
-                                    <div className="space-y-2">
-                                        {audioState.isPuristMode && (
-                                            <div className="px-2 py-1 bg-primary-500 text-black text-[9px] font-extrabold tracking-widest uppercase rounded inline-flex items-center gap-1 shadow-glow">
-                                                <Zap size={10} fill="currentColor" /> BIT PERFECT
-                                            </div>
-                                        )}
-                                        <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-white tracking-tighter drop-shadow-2xl line-clamp-2">
-                                            {currentTrack?.name || "Rawh Player"}
-                                        </h1>
-                                        <h2 className="text-xl md:text-2xl text-white/70 font-medium tracking-wide">
-                                            {currentTrack?.artist || "High Fidelity Engine"}
-                                        </h2>
-                                    </div>
-                                </div>
+                 {/* Tech Badges */}
+                 {currentTrack && (
+                     <div className="flex flex-wrap gap-2 text-[10px] font-bold tracking-widest uppercase text-neutral-400">
+                         <span className="px-2 py-1 rounded bg-white/5 border border-white/5 flex items-center gap-1.5">
+                            <FileDigit size={12} className="text-primary-500" />
+                            {currentTrack.format || 'FLAC'}
+                         </span>
+                         <span className="px-2 py-1 rounded bg-white/5 border border-white/5 flex items-center gap-1.5">
+                            <Activity size={12} className="text-blue-400" />
+                            {currentTrack.bitrate ? `${currentTrack.bitrate} kbps` : 'Lossless'}
+                         </span>
+                         <span className="px-2 py-1 rounded bg-white/5 border border-white/5 flex items-center gap-1.5">
+                            <Activity size={12} className="text-green-400" />
+                            {audioState.sampleRate / 1000} kHz
+                         </span>
+                     </div>
+                 )}
 
-                                {/* Bottom Tech Badges */}
-                                <div className="absolute bottom-8 left-8 flex items-center gap-3 select-none pointer-events-none">
-                                     <div className="px-4 py-2 rounded-full bg-black/40 border border-white/10 backdrop-blur-md text-[10px] font-mono text-neutral-300 flex items-center gap-2">
-                                         <AudioWaveform size={12} className="text-primary-500" />
-                                         {currentTrack?.format || 'PCM'} • {currentTrack?.bitrate ? `${currentTrack.bitrate}kbps` : 'LOSSLESS'} • {audioState.sampleRate/1000}kHz
-                                     </div>
-                                     <div className="px-4 py-2 rounded-full bg-black/40 border border-white/10 backdrop-blur-md text-[10px] font-mono text-primary-500 font-bold uppercase">
-                                         {audioState.processingPrecision}
-                                     </div>
-                                </div>
-                                
-                                {/* AI Action */}
-                                <button 
-                                    onClick={generateInsight}
-                                    className="absolute bottom-8 right-8 p-4 rounded-full bg-white/10 hover:bg-white/20 border border-white/10 backdrop-blur-md transition-all active:scale-95 group/ai"
-                                    title="Generate Insight"
-                                >
-                                    <Sparkles size={24} className={isLoadingInsight ? 'animate-spin text-primary-500' : 'text-white'} />
-                                </button>
-                                
-                                {aiInsight && (
-                                    <div className="absolute bottom-24 right-8 max-w-sm p-6 bg-neutral-900/90 backdrop-blur-xl border border-white/10 rounded-2xl text-sm text-neutral-200 shadow-2xl animate-in slide-in-from-bottom-5">
-                                        {aiInsight}
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-
-                        {/* Floating Tools Dock */}
-                        <div className="hidden xl:flex flex-col gap-4 justify-center absolute right-8 top-1/2 -translate-y-1/2">
-                            <button 
-                                onClick={() => { setShowEq(true); setAudioState(s => ({...s, isPuristMode: false})); }} 
-                                className={`w-14 h-14 rounded-2xl border flex items-center justify-center transition-all duration-300 shadow-xl ${!audioState.isPuristMode ? 'bg-primary-500 border-primary-400 text-black scale-110' : 'bg-black/40 border-white/10 backdrop-blur text-neutral-400 hover:text-white hover:bg-white/10'}`}
-                                title="Equalizer"
-                            >
-                                <Sliders size={24} strokeWidth={1.5} />
-                            </button>
-                             <button 
-                                className={`w-14 h-14 rounded-2xl border flex items-center justify-center transition-all bg-black/40 border-white/10 backdrop-blur text-neutral-600 cursor-not-allowed`}
-                                title="Spatial Audio (Future)"
-                            >
-                                <Waves size={24} strokeWidth={1.5} />
-                            </button>
-                        </div>
-                    </div>
-                </div>
-              );
-      }
-  };
+                 {/* Tools */}
+                 <div className="flex gap-3 pt-4">
+                     <button onClick={() => setShowEq(!showEq)} className={`px-5 py-2.5 rounded-full border border-white/10 flex items-center gap-2 text-xs font-bold uppercase tracking-wider transition-all hover:scale-105 ${showEq ? 'bg-primary-500 text-black shadow-[0_0_20px_rgba(var(--primary-500),0.4)]' : 'bg-white/5 text-neutral-300 hover:text-white hover:bg-white/10'}`}>
+                         <Sliders size={14} /> Equalizer
+                     </button>
+                     <button onClick={generateInsight} className="px-5 py-2.5 rounded-full border border-white/10 flex items-center gap-2 text-xs font-bold uppercase tracking-wider bg-white/5 text-neutral-300 hover:text-white hover:bg-white/10 transition-all hover:scale-105">
+                        <Sparkles size={14} className="text-purple-400" /> {isLoadingInsight ? 'Analyzing...' : 'AI Insight'}
+                     </button>
+                 </div>
+                 
+                 {aiInsight && (
+                     <div className="p-5 bg-white/5 border border-white/10 rounded-2xl text-sm text-neutral-200 leading-relaxed backdrop-blur-md shadow-inner">
+                         {aiInsight}
+                     </div>
+                 )}
+             </div>
+         </div>
+    </div>
+  );
 
   return (
-    <div className="flex flex-col h-screen bg-[#050505] text-white font-sans overflow-hidden selection:bg-primary-500/30">
-      <TitleBar />
+    <div className={`flex flex-col h-screen bg-black text-white overflow-hidden relative font-sans selection:bg-primary-500/30`}>
+      <audio ref={audioRef} crossOrigin="anonymous" onTimeUpdate={() => setAudioState(p => ({...p, currentTime: audioRef.current?.currentTime || 0}))} onEnded={() => handleNext()} />
       <Toast message={toastMsg} isVisible={!!toastMsg} onClose={() => setToastMsg("")} />
-      
-      <audio ref={audioRef} crossOrigin="anonymous" onEnded={handleNext} />
+      <TitleBar />
 
-      <div className="flex flex-1 overflow-hidden relative">
-          <Navigation activePage={activePage} onNavigate={setActivePage} />
+      {/* --- BACKGROUND --- */}
+      {isImmersive ? (
+        <div className="absolute inset-0 z-0 overflow-hidden bg-neutral-950">
+             <div className={`absolute inset-0 bg-cover bg-center transition-opacity duration-[2000ms] ${activeLayer === 1 ? 'opacity-50' : 'opacity-0'}`} style={{ backgroundImage: bgImageLayer1 ? `url(${bgImageLayer1})` : undefined, filter: 'blur(120px) saturate(1.2)' }} />
+             <div className={`absolute inset-0 bg-cover bg-center transition-opacity duration-[2000ms] ${activeLayer === 2 ? 'opacity-50' : 'opacity-0'}`} style={{ backgroundImage: bgImageLayer2 ? `url(${bgImageLayer2})` : undefined, filter: 'blur(120px) saturate(1.2)' }} />
+             <div className="absolute inset-0 bg-black/40" />
+        </div>
+      ) : (
+          <div className="absolute inset-0 overflow-hidden -z-10 bg-black">
+             <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 opacity-[0.03] scale-[2.5] pointer-events-none"><Logo /></div>
+             <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_var(--tw-gradient-stops))] from-primary-900/15 via-black to-black" />
+          </div>
+      )}
+
+      {/* --- LAYOUT --- */}
+      <div className="flex flex-1 overflow-hidden relative z-10 bg-transparent">
           
-          <main className="flex-1 relative z-10 flex flex-col min-w-0">
-             {renderContent()}
-          </main>
+          <Navigation activePage={activePage} onNavigate={(p) => { 
+              setActivePage(p); 
+              setIsFullPlayer(p === 'player'); 
+          }} />
           
+          <div className={`flex-1 flex flex-col relative transition-all duration-300`}>
+              <div className="flex-1 overflow-hidden pb-24 relative">
+                 {activePage === 'player' ? (
+                     <NowPlayingView />
+                 ) : (
+                    <>
+                        {activePage === 'files' && <FilesPage tracks={tracks} onPlay={(t) => {
+                            const idx = tracks.findIndex(x => x.id === t.id);
+                            if(idx !== currentTrackIndex) { setCurrentTrackIndex(idx); setAudioState(s=>({...s, isPlaying: true})); }
+                            else { setAudioState(s=>({...s, isPlaying: !s.isPlaying})); }
+                        }} onUpload={(e) => e.target.files && processFiles(e.target.files)} onPlayNext={id => {
+                            const t = tracks.find(x => x.id === id); if(t) { const idx = tracks.indexOf(t); const n = [...tracks]; n.splice(idx,1); n.splice(currentTrackIndex+1,0,t); setTracks(n); }
+                        }} onAddToQueue={id => {
+                            const t = tracks.find(x => x.id === id); if(t) { const idx = tracks.indexOf(t); const n = [...tracks]; n.push(t); setTracks(n); }
+                        }} onRemove={id => setTracks(p => p.filter(x => x.id !== id))} />}
+                        
+                        {activePage === 'search' && <SearchPage tracks={tracks} onPlay={(t) => {
+                            const idx = tracks.findIndex(x => x.id === t.id);
+                            if (idx === -1) { setTracks(p => [...p, t]); setCurrentTrackIndex(tracks.length); }
+                            else { setCurrentTrackIndex(idx); }
+                            setAudioState(s => ({...s, isPlaying: true}));
+                        }} />}
+                        
+                        {activePage === 'connect' && <ConnectPage onPlayUrl={url => {
+                            const t: Track = { id: crypto.randomUUID(), file: new File([], 'stream'), path: url, name: 'Stream', artist: 'Network', format: 'STREAM', dateAdded: Date.now(), fileSize: 0, source: 'local' };
+                            setTracks(p => [...p, t]); setCurrentTrackIndex(tracks.length); setAudioState(s => ({...s, isPlaying: true}));
+                        }} onImportPlaylist={handleImportPlaylist} />}
+                        
+                        {activePage === 'audiophile' && <AudiophilePage analyserNode={analyserNodeRef.current} sampleRate={audioState.sampleRate} />}
+                        
+                        {activePage === 'settings' && <SettingsPage currentThemeId={currentThemeId} onThemeChange={t => { setCurrentThemeId(t.id); document.documentElement.style.setProperty('--primary-500', t.colors[500]); }} isPuristMode={audioState.isPuristMode} onTogglePurist={() => setAudioState(p => ({...p, isPuristMode: !p.isPuristMode}))} processingPrecision={audioState.processingPrecision} onTogglePrecision={() => setAudioState(p => ({...p, processingPrecision: p.processingPrecision === '16-bit' ? '32-bit float' : '16-bit'}))} />}
+                    </>
+                 )}
+              </div>
+          </div>
+
+          {/* QUEUE DRAWER */}
           <QueueDrawer 
-             tracks={tracks}
-             currentTrackId={currentTrack?.id || null}
+             tracks={tracks} 
+             currentTrackId={currentTrack?.id || null} 
              isOpen={showQueue} 
              onClose={() => setShowQueue(false)}
-             onSelect={(t) => { setCurrentTrackIndex(tracks.indexOf(t)); setAudioState(s => ({...s, isPlaying: true})); }}
-             onRemove={(id) => setTracks(prev => prev.filter(t => t.id !== id))}
-             onShuffle={() => { /* Logic */ }}
+             onSelect={(t) => { setCurrentTrackIndex(tracks.findIndex(x=>x.id===t.id)); setAudioState(p=>({...p, isPlaying:true})); }}
+             onRemove={(id) => setTracks(p => p.filter(x => x.id !== id))}
+             onShuffle={() => { /* Shuffle logic */ }}
              onClear={() => setTracks([])}
           />
-          
-          <Equalizer 
-             isOpen={showEq} 
-             onClose={() => setShowEq(false)}
-             bands={eqBands}
-             onBandChange={(i, val) => {
-                 const newBands = [...eqBands];
-                 newBands[i].gain = val;
-                 setEqBands(newBands);
-             }}
-             onReset={() => setEqBands(DEFAULT_EQ_BANDS.map(b => ({...b})))}
-             currentPresetId={currentPresetId}
-             onPresetChange={(id) => {
-                 setCurrentPresetId(id);
-                 const p = EQ_PRESETS.find(x => x.id === id);
-                 if(p) setEqBands(p.bands.map(b => ({...b})));
-             }}
-             analyser={analyserNodeRef.current}
-          />
-      </div>
-
-      <div className={`transition-transform duration-500 ease-in-out z-50 ${mouseIdle ? 'translate-y-full opacity-0' : 'translate-y-0 opacity-100'}`}>
-        <Controls 
-            state={audioState}
-            currentTrack={currentTrack}
-            onPlayPause={handlePlayPause}
-            onNext={handleNext}
-            onPrev={handlePrev}
-            onSeek={(t) => { if(audioRef.current) audioRef.current.currentTime = t; }}
-            onVolumeChange={(v) => setAudioState(s => ({...s, volume: v, isMuted: v === 0}))}
-            onToggleMute={() => setAudioState(s => ({...s, isMuted: !s.isMuted}))}
-            playbackMode={playbackMode}
-            onToggleMode={() => {}}
-            onToggleLike={() => {}}
-            onSpeedChange={(r) => setAudioState(s => ({...s, playbackRate: r}))}
-            showQueue={showQueue}
-            onToggleQueue={() => setShowQueue(!showQueue)}
-        />
       </div>
 
       {isDragging && (
-          <div className="absolute inset-0 z-[100] bg-neutral-900/80 backdrop-blur-xl flex flex-col items-center justify-center border-4 border-primary-500/50 m-4 rounded-[3rem] animate-pulse">
-              <Sparkles size={64} className="text-primary-500 mb-4" />
-              <div className="text-5xl font-black text-white uppercase tracking-[0.2em] drop-shadow-2xl">
-                  Import Audio
-              </div>
+          <div className="absolute inset-0 z-[100] bg-black/80 backdrop-blur flex items-center justify-center pointer-events-none">
+              <div className="text-center animate-bounce text-primary-500"><FileDigit size={64} /><h2 className="text-2xl font-bold mt-4">DROP TO IMPORT</h2></div>
           </div>
       )}
+
+      <Controls 
+          state={audioState} 
+          currentTrack={currentTrack} 
+          onPlayPause={handlePlayPause} 
+          onNext={() => handleNext(false)} 
+          onPrev={handlePrev} 
+          onSeek={handleSeek} 
+          onVolumeChange={(v) => setAudioState(p => ({...p, volume: v, isMuted: v === 0}))} 
+          onToggleMute={() => setAudioState(p => ({...p, isMuted: !p.isMuted}))} 
+          playbackMode={playbackMode} 
+          onToggleMode={() => {}} 
+          onToggleLike={() => {}} 
+          onSpeedChange={(s) => setAudioState(p => ({...p, playbackRate: s}))}
+          showQueue={showQueue}
+          onToggleQueue={() => setShowQueue(!showQueue)}
+          isExpanded={isFullPlayer}
+          onToggleExpand={() => { 
+              if(isFullPlayer) { setIsFullPlayer(false); setActivePage('files'); }
+              else { setIsFullPlayer(true); setActivePage('player'); }
+          }}
+      />
+
+      <Equalizer 
+        isOpen={showEq} 
+        onClose={() => setShowEq(false)} 
+        bands={eqBands} 
+        onBandChange={(i, g) => { 
+            const n = [...eqBands]; n[i].gain = g; setEqBands(n); setCurrentPresetId('manual'); 
+        }} 
+        onReset={() => { /* Reset */ }} 
+        currentPresetId={currentPresetId} 
+        onPresetChange={(id) => { 
+            setCurrentPresetId(id); 
+            const p = EQ_PRESETS.find(x => x.id === id); 
+            if(p) setEqBands(p.bands.map(b => ({...b}))); 
+        }} 
+        analyser={analyserNodeRef.current} 
+      />
+
     </div>
   );
 };
