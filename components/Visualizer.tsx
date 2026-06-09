@@ -1,12 +1,13 @@
-import React, { useEffect, useRef, useMemo } from 'react';
+import React, { useEffect, useRef, useMemo, useState } from 'react';
+import { listen } from '@tauri-apps/api/event';
 
 interface VisualizerProps {
   isPlaying: boolean;
-  analyser?: AnalyserNode | null; 
 }
 
-export const Visualizer: React.FC<VisualizerProps> = ({ isPlaying, analyser }) => {
+export const Visualizer: React.FC<VisualizerProps> = ({ isPlaying }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const fftDataRef = useRef<number[]>(new Array(512).fill(0));
   const animationFrameRef = useRef<number>(0);
 
   // Optimization: Cache colors only once or when necessary, not every frame
@@ -19,15 +20,24 @@ export const Visualizer: React.FC<VisualizerProps> = ({ isPlaying, analyser }) =
         primary500: styles.getPropertyValue('--primary-500').trim() || '#f59e0b',
         primary900: styles.getPropertyValue('--primary-900').trim() || '#78350f'
     };
-  }, [isPlaying]); // Re-calculate if playing state changes (likely meaning theme might have changed or app mounted)
+  }, [isPlaying]);
+
+  useEffect(() => {
+    const unlisten = listen<{ fft: number[] }>('fft_data', (event) => {
+      fftDataRef.current = event.payload.fft;
+    });
+
+    return () => {
+      unlisten.then(f => f());
+    };
+  }, []);
 
   useEffect(() => {
     const draw = () => {
-      if (!analyser || !canvasRef.current) return;
+      if (!canvasRef.current) return;
 
-      const bufferLength = analyser.frequencyBinCount;
-      const dataArray = new Uint8Array(bufferLength);
-      analyser.getByteFrequencyData(dataArray);
+      const dataArray = fftDataRef.current;
+      const bufferLength = dataArray.length;
 
       const canvas = canvasRef.current;
       const ctx = canvas.getContext('2d');
@@ -55,7 +65,8 @@ export const Visualizer: React.FC<VisualizerProps> = ({ isPlaying, analyser }) =
       const renderCount = Math.floor(bufferLength * 0.33); 
 
       for (let i = 0; i < renderCount; i++) {
-        const v = dataArray[i] / 255;
+        // Rust rustfft magnitudes can be large, normalize roughly
+        const v = Math.min(dataArray[i] / 500, 1.0); 
         const barHeight = v * height;
         ctx.fillRect(x, height - barHeight, barWidth - 1, barHeight);
         x += barWidth;
@@ -64,7 +75,7 @@ export const Visualizer: React.FC<VisualizerProps> = ({ isPlaying, analyser }) =
       animationFrameRef.current = requestAnimationFrame(draw);
     };
 
-    if (isPlaying && analyser) {
+    if (isPlaying) {
         draw();
     } else {
         if(canvasRef.current) {
@@ -77,7 +88,7 @@ export const Visualizer: React.FC<VisualizerProps> = ({ isPlaying, analyser }) =
     return () => {
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
     };
-  }, [isPlaying, analyser, colors]);
+  }, [isPlaying, colors]);
 
   // Handle High-DPI Scaling
   useEffect(() => {

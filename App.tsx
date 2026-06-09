@@ -15,6 +15,8 @@ import { QueueDrawer } from './components/QueueDrawer';
 import { Sparkles, Sliders, Waves, AudioWaveform, Zap } from 'lucide-react';
 import { getTrackInsight } from './services/geminiService';
 import 'jsmediatags';
+import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 
 // Enforce types for window globals
 declare global {
@@ -58,13 +60,7 @@ const App: React.FC = () => {
   const [currentThemeId, setCurrentThemeId] = useState('reference');
   
   // Audio Refs - The Core Engine
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const sourceNodeRef = useRef<MediaElementAudioSourceNode | null>(null);
-  const eqNodesRef = useRef<BiquadFilterNode[]>([]);
-  const analyserNodeRef = useRef<AnalyserNode | null>(null);
-  const gainNodeRef = useRef<GainNode | null>(null);
-  const mouseTimer = useRef<number>(0);
+  const mouseTimer = useRef<NodeJS.Timeout | null>(null);
 
   const currentTrack = tracks[currentTrackIndex];
 
@@ -81,98 +77,18 @@ const App: React.FC = () => {
     return () => window.removeEventListener('mousemove', handleMove);
   }, [audioState.isPlaying, showQueue, showEq, isDragging]);
 
-  // --- AUDIO GRAPH INITIALIZATION ---
+  // --- TAURI EVENT LISTENERS ---
   useEffect(() => {
-      if (!audioRef.current) return;
-      
-      const initAudio = () => {
-          if (!audioContextRef.current) {
-              const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-              // latencyHint 'playback' favors buffer stability over latency (good for music)
-              audioContextRef.current = new AudioCtx({ latencyHint: 'playback' });
-              
-              setAudioState(prev => ({ ...prev, sampleRate: audioContextRef.current?.sampleRate || 44100 }));
-              
-              analyserNodeRef.current = audioContextRef.current.createAnalyser();
-              analyserNodeRef.current.fftSize = 4096; // 4096 for High Res RTA
-              analyserNodeRef.current.smoothingTimeConstant = 0.8;
-              
-              gainNodeRef.current = audioContextRef.current.createGain();
-          }
-
-          const ctx = audioContextRef.current;
-          if (ctx.state === 'suspended') ctx.resume();
-
-          if (!sourceNodeRef.current) {
-               try {
-                  sourceNodeRef.current = ctx.createMediaElementSource(audioRef.current);
-               } catch(e) { /* Prevent double connection error */ }
-          }
-
-          // Create EQ Nodes if missing
-          if (eqNodesRef.current.length === 0) {
-              eqNodesRef.current = eqBands.map(band => {
-                  const filter = ctx.createBiquadFilter();
-                  filter.type = 'peaking';
-                  filter.frequency.value = band.frequency;
-                  filter.gain.value = band.gain;
-                  filter.Q.value = 1.0;
-                  return filter;
-              });
-          }
-
-          // --- ROUTING MATRIX ---
-          const source = sourceNodeRef.current!;
-          const analyser = analyserNodeRef.current!;
-          const gain = gainNodeRef.current!;
-          const eqNodes = eqNodesRef.current;
-
-          // 1. Disconnect everything first
-          source.disconnect();
-          eqNodes.forEach(n => n.disconnect());
-          analyser.disconnect();
-          gain.disconnect();
-
-          if (audioState.isPuristMode) {
-              // --- PURIST PATH (BIT PERFECT INTENT) ---
-              // Source -> Gain -> Destination
-              // We tap the Analyser off the Source, but it DOES NOT go to Destination.
-              // This ensures the audio you hear is untouched by the Analyser node logic.
-              source.connect(gain);
-              gain.connect(ctx.destination);
-              
-              // Visualization Tap (Sidechain)
-              source.connect(analyser); 
-          } else {
-              // --- DSP PATH ---
-              // Source -> EQ -> Gain -> Analyser -> Destination
-              let currentNode: AudioNode = source;
-              eqNodes.forEach(filter => {
-                  currentNode.connect(filter);
-                  currentNode = filter;
-              });
-              currentNode.connect(gain);
-              gain.connect(analyser);
-              analyser.connect(ctx.destination);
-          }
-      };
-
-      // Ensure AudioContext is started by user interaction
-      document.addEventListener('click', initAudio, { once: true });
-      initAudio();
-
-  }, [audioState.isPuristMode]);
-
-  // Update EQ Gains Real-time
-  useEffect(() => {
-      const ctx = audioContextRef.current;
-      if (!ctx) return;
-      eqNodesRef.current.forEach((node, i) => {
-          if (node && eqBands[i]) {
-              node.gain.setTargetAtTime(eqBands[i].gain, ctx.currentTime, 0.1);
-          }
+      const unlistenPlayback = listen<any>('playback_update', (event) => {
+          setAudioState(s => ({
+              ...s,
+              currentTime: event.payload.current_time,
+              duration: event.payload.duration,
+              isPlaying: event.payload.is_playing
+          }));
       });
-  }, [eqBands]);
+      return () => { unlistenPlayback.then(f => f()); };
+  }, []);
 
   const showToast = (msg: string) => setToastMsg(msg);
 
@@ -263,68 +179,56 @@ const App: React.FC = () => {
   }, [handleDragDrop]);
 
   // --- CONTROLS LOGIC ---
-  const handleNext = () => {
+  const handleNext = useCallback(() => {
      if (tracks.length === 0) return;
      let nextIdx = currentTrackIndex + 1;
      if (playbackMode === PlaybackMode.SHUFFLE) nextIdx = Math.floor(Math.random() * tracks.length);
      if (nextIdx >= tracks.length) nextIdx = 0;
      setCurrentTrackIndex(nextIdx);
-     setAudioState(s => ({ ...s, isPlaying: true }));
-  };
+  }, [tracks, currentTrackIndex, playbackMode]);
 
   const handlePrev = () => {
-      if (audioRef.current && audioRef.current.currentTime > 3) {
-          audioRef.current.currentTime = 0;
+      if (audioState.currentTime > 3) {
+          invoke('seek_audio', { position: 0.0 });
           return;
       }
       let prev = currentTrackIndex - 1;
       if (prev < 0) prev = tracks.length - 1;
       setCurrentTrackIndex(prev);
-      setAudioState(s => ({ ...s, isPlaying: true }));
   };
 
   const handlePlayPause = () => {
-      if (currentTrackIndex === -1 && tracks.length > 0) setCurrentTrackIndex(0);
-      setAudioState(s => ({ ...s, isPlaying: !s.isPlaying }));
+      if (currentTrackIndex === -1 && tracks.length > 0) {
+          setCurrentTrackIndex(0);
+          return;
+      }
+      invoke('toggle_play').catch(console.error);
   };
 
   // Handle Playback State
   useEffect(() => {
-      const audio = audioRef.current;
-      if(!audio) return;
-      
       if(currentTrack) {
-          // Determine source URL
-          const url = currentTrack.source === 'youtube' && currentTrack.path 
-            ? currentTrack.path 
-            : URL.createObjectURL(currentTrack.file);
-            
-          audio.src = url;
-          audio.playbackRate = audioState.playbackRate;
-          
-          if(audioState.isPlaying) {
-              const playPromise = audio.play();
-              if (playPromise !== undefined) {
-                  playPromise.catch(error => console.warn("Playback prevented:", error));
-              }
+          const path = (currentTrack.file as any).path || currentTrack.path;
+          if (path) {
+              invoke('play_file', { path }).catch(console.error);
+          } else {
+              showToast("Error: Missing absolute path for file (required for native engine).");
           }
-          
-          return () => { 
-              if(currentTrack.source !== 'youtube') URL.revokeObjectURL(url); 
-          };
       }
   }, [currentTrackIndex]); 
 
   useEffect(() => {
-      if(audioRef.current) {
-          if(audioState.isPlaying) audioRef.current.play().catch(() => {});
-          else audioRef.current.pause();
-      }
-  }, [audioState.isPlaying]);
-
-  useEffect(() => {
-      if(audioRef.current) audioRef.current.volume = audioState.isMuted ? 0 : audioState.volume;
+      invoke('set_volume', { volume: audioState.isMuted ? 0.0 : audioState.volume }).catch(console.error);
   }, [audioState.volume, audioState.isMuted]);
+
+  // Track End Auto-Next logic
+  useEffect(() => {
+      if (audioState.duration > 0 && audioState.duration - audioState.currentTime < 0.5) {
+          if (audioState.isPlaying) {
+             handleNext();
+          }
+      }
+  }, [audioState.currentTime, audioState.duration]);
 
   // AI Insights
   const generateInsight = async () => {
@@ -352,7 +256,7 @@ const App: React.FC = () => {
                   setTracks(prev => [t, ...prev]); setCurrentTrackIndex(0); setAudioState(s => ({...s, isPlaying: true})); setActivePage('player');
               }} />;
           case 'audiophile':
-              return <AudiophilePage analyserNode={analyserNodeRef.current} sampleRate={audioState.sampleRate} />;
+              return <AudiophilePage sampleRate={audioState.sampleRate} />
           case 'connect':
               return <ConnectPage onPlayUrl={(url) => { /* stream logic */ }} />;
           case 'settings':
@@ -392,7 +296,7 @@ const App: React.FC = () => {
                                     </div>
                                 )}
                                 
-                                <Visualizer isPlaying={audioState.isPlaying} analyser={analyserNodeRef.current} />
+                                <Visualizer isPlaying={audioState.isPlaying} />
                                 
                                 {/* Idle State */}
                                 {!audioState.isPlaying && (
@@ -474,8 +378,6 @@ const App: React.FC = () => {
     <div className="flex flex-col h-screen bg-[#050505] text-white font-sans overflow-hidden selection:bg-primary-500/30">
       <TitleBar />
       <Toast message={toastMsg} isVisible={!!toastMsg} onClose={() => setToastMsg("")} />
-      
-      <audio ref={audioRef} crossOrigin="anonymous" onEnded={handleNext} />
 
       <div className="flex flex-1 overflow-hidden relative">
           <Navigation activePage={activePage} onNavigate={setActivePage} />
@@ -511,7 +413,6 @@ const App: React.FC = () => {
                  const p = EQ_PRESETS.find(x => x.id === id);
                  if(p) setEqBands(p.bands.map(b => ({...b})));
              }}
-             analyser={analyserNodeRef.current}
           />
       </div>
 
@@ -522,7 +423,7 @@ const App: React.FC = () => {
             onPlayPause={handlePlayPause}
             onNext={handleNext}
             onPrev={handlePrev}
-            onSeek={(t) => { if(audioRef.current) audioRef.current.currentTime = t; }}
+            onSeek={(t) => invoke('seek_audio', { position: t })}
             onVolumeChange={(v) => setAudioState(s => ({...s, volume: v, isMuted: v === 0}))}
             onToggleMute={() => setAudioState(s => ({...s, isMuted: !s.isMuted}))}
             playbackMode={playbackMode}

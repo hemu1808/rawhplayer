@@ -1,7 +1,8 @@
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { EqualizerBand, EQ_PRESETS } from '../types';
 import { RotateCcw, X, Activity, ChevronDown, Zap } from 'lucide-react';
+import { listen } from '@tauri-apps/api/event';
 
 interface EqualizerProps {
   isOpen: boolean;
@@ -11,7 +12,6 @@ interface EqualizerProps {
   onReset: () => void;
   currentPresetId: string;
   onPresetChange: (presetId: string) => void;
-  analyser?: AnalyserNode | null; // Optional analyser for RTA overlay
 }
 
 export const Equalizer: React.FC<EqualizerProps> = ({ 
@@ -21,25 +21,35 @@ export const Equalizer: React.FC<EqualizerProps> = ({
     onBandChange, 
     onReset,
     currentPresetId,
-    onPresetChange,
-    analyser
+    onPresetChange
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef<number>(0);
+  const fftDataRef = useRef<number[]>(new Array(512).fill(0));
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const unlisten = listen<{ fft: number[] }>('fft_data', (event) => {
+      fftDataRef.current = event.payload.fft;
+    });
+
+    return () => {
+      unlisten.then(f => f());
+    };
+  }, [isOpen]);
 
   // RTA Visualization Loop
   useEffect(() => {
-    if (!isOpen || !analyser || !canvasRef.current) return;
+    if (!isOpen || !canvasRef.current) return;
     
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const bufferLength = analyser.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
-
     const draw = () => {
-        analyser.getByteFrequencyData(dataArray);
+        const dataArray = fftDataRef.current;
+        const bufferLength = dataArray.length;
+
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         
         const width = canvas.width;
@@ -50,8 +60,9 @@ export const Equalizer: React.FC<EqualizerProps> = ({
 
         for (let i = 0; i < 64; i++) {
             const bin = Math.floor(Math.pow(i / 64, 2) * bufferLength); 
-            const value = dataArray[bin];
-            const barHeight = (value / 255) * height;
+            // Normalize rustfft magnitude
+            const value = Math.min((dataArray[bin] || 0) / 500, 1.0);
+            const barHeight = value * height;
 
             if (barHeight > 0) {
                  ctx.fillRect(i * barWidth, height - barHeight, barWidth - 1, barHeight);
@@ -64,7 +75,7 @@ export const Equalizer: React.FC<EqualizerProps> = ({
     
     return () => cancelAnimationFrame(rafRef.current);
 
-  }, [isOpen, analyser]);
+  }, [isOpen]);
 
   if (!isOpen) return null;
 

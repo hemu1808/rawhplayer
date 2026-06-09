@@ -1,22 +1,30 @@
-
 import React, { useEffect, useRef, useState } from 'react';
 import { ScrollArea } from '../components/ScrollArea';
 import { Activity, Zap, Cpu, Waves, Radar, Move, BarChart2 } from 'lucide-react';
+import { listen } from '@tauri-apps/api/event';
 
 interface AudiophilePageProps {
-  analyserNode: AnalyserNode | null;
   sampleRate: number;
 }
 
-export const AudiophilePage: React.FC<AudiophilePageProps> = ({ analyserNode, sampleRate }) => {
+export const AudiophilePage: React.FC<AudiophilePageProps> = ({ sampleRate }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const scopeRef = useRef<HTMLCanvasElement>(null);
   const goniometerRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef<number>(0);
   const [dbLevels, setDbLevels] = useState({ left: -60, right: -60 });
   
+  const fftDataRef = useRef<{ fft: number[], waveform: number[] }>({ fft: [], waveform: [] });
+
   useEffect(() => {
-    if (!analyserNode || !canvasRef.current || !scopeRef.current || !goniometerRef.current) return;
+    const unlisten = listen<{ fft: number[], waveform: number[] }>('fft_data', (event) => {
+      fftDataRef.current = event.payload;
+    });
+    return () => { unlisten.then(f => f()); };
+  }, []);
+
+  useEffect(() => {
+    if (!canvasRef.current || !scopeRef.current || !goniometerRef.current) return;
 
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
@@ -27,10 +35,6 @@ export const AudiophilePage: React.FC<AudiophilePageProps> = ({ analyserNode, sa
     
     if (!ctx || !scopeCtx || !gonioCtx) return;
 
-    const bufferLength = analyserNode.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
-    const timeDomainArray = new Uint8Array(bufferLength);
-    
     // Create an offscreen canvas to shift the spectrogram
     const tempCanvas = document.createElement('canvas');
     tempCanvas.width = canvas.width;
@@ -38,16 +42,21 @@ export const AudiophilePage: React.FC<AudiophilePageProps> = ({ analyserNode, sa
     const tempCtx = tempCanvas.getContext('2d');
 
     const draw = () => {
-        analyserNode.getByteFrequencyData(dataArray);
-        analyserNode.getByteTimeDomainData(timeDomainArray);
+        const { fft, waveform } = fftDataRef.current;
+        const bufferLength = fft.length;
+        if (bufferLength === 0) {
+            rafRef.current = requestAnimationFrame(draw);
+            return;
+        }
 
         // --- CALC PEAKS (Simulated Stereo split) ---
         let sum = 0;
-        for(let i=0; i<bufferLength; i++) {
-             sum += (timeDomainArray[i] - 128) * (timeDomainArray[i] - 128);
+        for(let i=0; i<waveform.length; i++) {
+             // waveform is already f32 between -1 and 1
+             sum += waveform[i] * waveform[i];
         }
-        const rms = Math.sqrt(sum / bufferLength);
-        const db = 20 * Math.log10(rms / 128); 
+        const rms = Math.sqrt(sum / waveform.length) || 0.0000001;
+        const db = 20 * Math.log10(rms); 
         // Fake stereo spread for visual
         setDbLevels({ left: Math.max(-60, db), right: Math.max(-60, db - (Math.random()*2)) });
 
@@ -58,11 +67,11 @@ export const AudiophilePage: React.FC<AudiophilePageProps> = ({ analyserNode, sa
             ctx.drawImage(tempCanvas, -1, 0); // Slower shift for better res
 
             for(let i = 0; i < bufferLength; i += 2) { 
-                const value = dataArray[i];
-                if (value > 10) { // Threshold to reduce noise
+                const value = Math.min((fft[i] || 0) / 100, 1.0); // normalize roughly
+                if (value > 0.05) { // Threshold to reduce noise
                     const y = canvas.height - (i / bufferLength) * canvas.height;
-                    const hueVal = 260 - ((value/255) * 260); // Blue to Red heatmap
-                    const lightness = (value/255) * 60;
+                    const hueVal = 260 - (value * 260); // Blue to Red heatmap
+                    const lightness = value * 60;
                     ctx.fillStyle = `hsla(${hueVal}, 100%, ${lightness}%, 1)`;
                     ctx.fillRect(canvas.width - 1, y, 1, 2);
                 }
@@ -74,11 +83,11 @@ export const AudiophilePage: React.FC<AudiophilePageProps> = ({ analyserNode, sa
         scopeCtx.lineWidth = 2;
         scopeCtx.strokeStyle = '#4ade80'; 
         scopeCtx.beginPath();
-        const sliceWidth = scopeCanvas.width * 1.0 / bufferLength;
+        const sliceWidth = scopeCanvas.width * 1.0 / waveform.length;
         let x = 0;
-        for (let i = 0; i < bufferLength; i++) {
-            const v = timeDomainArray[i] / 128.0;
-            const y = v * scopeCanvas.height / 2;
+        for (let i = 0; i < waveform.length; i++) {
+            const v = waveform[i]; // -1.0 to 1.0
+            const y = (1.0 - v) * scopeCanvas.height / 2;
             if (i === 0) scopeCtx.moveTo(x, y); else scopeCtx.lineTo(x, y);
             x += sliceWidth;
         }
@@ -92,9 +101,9 @@ export const AudiophilePage: React.FC<AudiophilePageProps> = ({ analyserNode, sa
         gonioCtx.strokeStyle = 'rgba(96, 165, 250, 0.8)';
         gonioCtx.beginPath();
         
-        for (let i = 0; i < bufferLength; i+=4) {
-             const L = (timeDomainArray[i] - 128) / 128;
-             const R = (timeDomainArray[(i + 16) % bufferLength] - 128) / 128; // Phase offset
+        for (let i = 0; i < waveform.length; i+=4) {
+             const L = waveform[i];
+             const R = waveform[(i + 16) % waveform.length] || 0; // Phase offset
              const valX = (L - R) * 0.707 * (center * 0.8);
              const valY = (L + R) * 0.707 * (center * 0.8);
              if (i===0) gonioCtx.moveTo(center + valX, center - valY);
@@ -106,7 +115,7 @@ export const AudiophilePage: React.FC<AudiophilePageProps> = ({ analyserNode, sa
     };
     draw();
     return () => cancelAnimationFrame(rafRef.current);
-  }, [analyserNode]);
+  }, []);
 
   // DB Meter Helper
   const Meter = ({ val, label }: { val: number, label: string }) => (

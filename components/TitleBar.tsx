@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Minus, Square, X } from 'lucide-react';
-import { appWindow } from '@tauri-apps/api/window';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Logo } from './Logo';
 
 export const TitleBar: React.FC = () => {
@@ -9,22 +9,22 @@ export const TitleBar: React.FC = () => {
 
   useEffect(() => {
     // Check if running in Tauri
-    if ((window as any).__TAURI__) {
+    if ((window as any).__TAURI_INTERNALS__) {
       setIsTauri(true);
     }
   }, []);
 
   const handleMinimize = () => {
-    appWindow.minimize();
+    getCurrentWindow().minimize();
   };
 
   const handleMaximize = async () => {
-    await appWindow.toggleMaximize();
-    setIsMaximized(await appWindow.isMaximized());
+    await getCurrentWindow().toggleMaximize();
+    setIsMaximized(await getCurrentWindow().isMaximized());
   };
 
   const handleClose = () => {
-    appWindow.close();
+    getCurrentWindow().close();
   };
 
   return (
