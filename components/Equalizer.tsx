@@ -126,7 +126,7 @@ export const Equalizer: React.FC<EqualizerProps> = ({
                 ))}
             </div>
 
-            <svg className="absolute inset-0 w-full h-full p-0 overflow-visible" preserveAspectRatio="none">
+            <svg className="absolute inset-0 w-full h-full p-0 overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none">
                  <defs>
                     <linearGradient id="eqGradient" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="0%" stopColor="var(--primary-500)" stopOpacity="0.4" />
@@ -134,12 +134,12 @@ export const Equalizer: React.FC<EqualizerProps> = ({
                     </linearGradient>
                 </defs>
                 <path 
-                    d={`M0,100 ` + bands.map((b, i) => `L${(i / (bands.length - 1)) * 100}%,${100 - ((b.gain + 12)/24)*100}`).join(' ') + ` L100,100 Z`}
+                    d={`M0,100 ` + bands.map((b, i) => `L${(i / (bands.length - 1)) * 100},${100 - ((b.gain + 12)/24)*100}`).join(' ') + ` L100,100 Z`}
                     fill="url(#eqGradient)" 
                     className="transition-all duration-300 ease-out"
                 />
                 <path 
-                    d={`M0,${100 - ((bands[0].gain + 12)/24)*100} ` + bands.map((b, i) => `L${(i / (bands.length - 1)) * 100}%,${100 - ((b.gain + 12)/24)*100}`).join(' ')}
+                    d={`M0,${100 - ((bands[0].gain + 12)/24)*100} ` + bands.map((b, i) => `L${(i / (bands.length - 1)) * 100},${100 - ((b.gain + 12)/24)*100}`).join(' ')}
                     fill="none" 
                     stroke="var(--primary-400)" 
                     strokeWidth="2"

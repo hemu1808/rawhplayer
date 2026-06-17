@@ -1,6 +1,5 @@
-
 import React from 'react';
-import { Shield, Zap, Volume2, Palette, Image, ToggleRight, ToggleLeft, Cpu } from 'lucide-react';
+import { Shield, Volume2, Palette, ToggleRight, ToggleLeft } from 'lucide-react';
 import { ThemeColor } from '../types';
 import { ScrollArea } from '../components/ScrollArea';
 
@@ -12,6 +11,7 @@ interface SettingsPageProps {
     bufferSize?: number;
     processingPrecision?: '16-bit' | '32-bit float';
     onTogglePrecision?: () => void;
+    onBufferSizeChange?: (size: number) => void;
 }
 
 const THEMES: ThemeColor[] = [
@@ -30,7 +30,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     onTogglePurist, 
     bufferSize = 2048,
     processingPrecision = '32-bit float',
-    onTogglePrecision
+    onTogglePrecision,
+    onBufferSizeChange
 }) => {
   return (
     <ScrollArea title="Settings" subtitle="Preferences & Customization">
@@ -51,6 +52,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                         <button 
                             key={theme.id}
                             onClick={() => onThemeChange(theme)}
+                            aria-label={`Select ${theme.name} theme`}
                             className={`relative h-28 rounded-xl border transition-all duration-300 group overflow-hidden ${
                                 currentThemeId === theme.id 
                                 ? 'border-primary-500 ring-2 ring-primary-500/30 scale-105 z-10' 
@@ -97,9 +99,14 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                         </div>
                         <div className="text-xs text-neutral-500">Bypasses EQ and DSP for transparent signal path.</div>
                     </div>
-                    <div onClick={onTogglePurist} className={`cursor-pointer transition-colors ${isPuristMode ? 'text-primary-500' : 'text-neutral-600'}`}>
+                    <button 
+                        onClick={onTogglePurist} 
+                        aria-label="Toggle Audio Purist Mode"
+                        aria-pressed={isPuristMode}
+                        className={`transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500/50 rounded-lg ${isPuristMode ? 'text-primary-500' : 'text-neutral-600'}`}
+                    >
                         {isPuristMode ? <ToggleRight size={32} /> : <ToggleLeft size={32} />}
-                    </div>
+                    </button>
                 </div>
                 
                 <div className="p-6 flex items-center justify-between border-b border-white/5 hover:bg-white/5 transition-colors">
@@ -107,9 +114,14 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                         <div className="text-white text-base font-medium mb-1">32-Bit Floating Point</div>
                         <div className="text-xs text-neutral-500">Internal DSP precision resolution.</div>
                     </div>
-                    <div onClick={onTogglePrecision} className={`cursor-pointer transition-colors ${processingPrecision === '32-bit float' ? 'text-primary-500' : 'text-neutral-600'}`}>
+                    <button 
+                        onClick={onTogglePrecision} 
+                        aria-label="Toggle 32-Bit Floating Point Precision"
+                        aria-pressed={processingPrecision === '32-bit float'}
+                        className={`transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500/50 rounded-lg ${processingPrecision === '32-bit float' ? 'text-primary-500' : 'text-neutral-600'}`}
+                    >
                         {processingPrecision === '32-bit float' ? <ToggleRight size={32} /> : <ToggleLeft size={32} />}
-                    </div>
+                    </button>
                 </div>
 
                 <div className="p-6 flex items-center justify-between hover:bg-white/5 transition-colors">
@@ -118,12 +130,14 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                         <div className="text-xs text-neutral-500">Lower latency vs stability.</div>
                     </div>
                     <select 
-                        defaultValue={bufferSize === 2048 ? "2048 samples (Stable)" : "512 samples (Low Latency)"}
+                        value={bufferSize}
+                        onChange={(e) => onBufferSizeChange?.(Number(e.target.value))}
+                        aria-label="Select Audio Buffer Size"
                         className="bg-black/50 border border-white/10 text-xs text-white rounded-lg px-3 py-2 outline-none focus:border-primary-500 transition-colors"
                     >
-                        <option>512 samples (Low Latency)</option>
-                        <option>1024 samples (Balanced)</option>
-                        <option>2048 samples (Stable)</option>
+                        <option value={512}>512 samples (Low Latency)</option>
+                        <option value={1024}>1024 samples (Balanced)</option>
+                        <option value={2048}>2048 samples (Stable)</option>
                     </select>
                 </div>
             </div>
@@ -145,6 +159,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                             type="text" 
                             value="••••••••••••••••••••••••" 
                             disabled
+                            aria-label="Gemini API Key Status"
                             className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-neutral-400 font-mono text-sm tracking-widest"
                         />
                         <div className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-primary-500 bg-primary-500/10 px-2 py-1 rounded border border-primary-500/20">

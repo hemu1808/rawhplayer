@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { ScrollArea } from '../components/ScrollArea';
 import { Activity, Zap, Cpu, Waves, Radar, Move, BarChart2 } from 'lucide-react';
 import { listen } from '@tauri-apps/api/event';
@@ -12,7 +12,10 @@ export const AudiophilePage: React.FC<AudiophilePageProps> = ({ sampleRate }) =>
   const scopeRef = useRef<HTMLCanvasElement>(null);
   const goniometerRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef<number>(0);
-  const [dbLevels, setDbLevels] = useState({ left: -60, right: -60 });
+
+  const leftMeterRef = useRef<HTMLDivElement>(null);
+  const rightMeterRef = useRef<HTMLDivElement>(null);
+  const peakLevelTextRef = useRef<HTMLSpanElement>(null);
   
   const fftDataRef = useRef<{ fft: number[], waveform: number[] }>({ fft: [], waveform: [] });
 
@@ -52,13 +55,29 @@ export const AudiophilePage: React.FC<AudiophilePageProps> = ({ sampleRate }) =>
         // --- CALC PEAKS (Simulated Stereo split) ---
         let sum = 0;
         for(let i=0; i<waveform.length; i++) {
-             // waveform is already f32 between -1 and 1
              sum += waveform[i] * waveform[i];
         }
         const rms = Math.sqrt(sum / waveform.length) || 0.0000001;
         const db = 20 * Math.log10(rms); 
-        // Fake stereo spread for visual
-        setDbLevels({ left: Math.max(-60, db), right: Math.max(-60, db - (Math.random()*2)) });
+        
+        const leftDb = Math.max(-60, db);
+        const rightDb = Math.max(-60, db - (Math.random()*2));
+        
+        // Direct DOM updates instead of setState (H-7 Fix)
+        const leftHeight = ((leftDb + 60) / 60) * 100;
+        const rightHeight = ((rightDb + 60) / 60) * 100;
+        
+        if (leftMeterRef.current) {
+            leftMeterRef.current.style.height = `${leftHeight}%`;
+            leftMeterRef.current.className = `absolute bottom-0 w-full transition-all duration-75 ${leftDb > -3 ? 'bg-red-500' : leftDb > -12 ? 'bg-yellow-500' : 'bg-green-500'}`;
+        }
+        if (rightMeterRef.current) {
+            rightMeterRef.current.style.height = `${rightHeight}%`;
+            rightMeterRef.current.className = `absolute bottom-0 w-full transition-all duration-75 ${rightDb > -3 ? 'bg-red-500' : rightDb > -12 ? 'bg-yellow-500' : 'bg-green-500'}`;
+        }
+        if (peakLevelTextRef.current) {
+            peakLevelTextRef.current.textContent = leftDb.toFixed(1);
+        }
 
         // --- SPECTROGRAM ---
         if (tempCtx) {
@@ -117,19 +136,6 @@ export const AudiophilePage: React.FC<AudiophilePageProps> = ({ sampleRate }) =>
     return () => cancelAnimationFrame(rafRef.current);
   }, []);
 
-  // DB Meter Helper
-  const Meter = ({ val, label }: { val: number, label: string }) => (
-      <div className="flex flex-col items-center gap-1 h-full">
-          <div className="w-4 h-32 bg-neutral-900 rounded-full border border-white/10 relative overflow-hidden">
-              <div 
-                className={`absolute bottom-0 w-full transition-all duration-75 ${val > -3 ? 'bg-red-500' : val > -12 ? 'bg-yellow-500' : 'bg-green-500'}`}
-                style={{ height: `${((val + 60) / 60) * 100}%` }}
-              />
-          </div>
-          <span className="text-[9px] font-mono text-neutral-500">{label}</span>
-      </div>
-  );
-
   return (
     <ScrollArea title="Audiophile" subtitle="Advanced Signal Analysis">
       <div className="px-6 md:px-8 max-w-7xl mx-auto space-y-8 pb-32">
@@ -149,8 +155,26 @@ export const AudiophilePage: React.FC<AudiophilePageProps> = ({ sampleRate }) =>
              
              {/* Meters */}
              <div className="lg:col-span-1 glass-panel p-4 rounded-2xl flex items-center justify-center gap-4">
-                 <Meter val={dbLevels.left} label="L" />
-                 <Meter val={dbLevels.right} label="R" />
+                 <div className="flex flex-col items-center gap-1 h-full">
+                     <div className="w-4 h-32 bg-neutral-900 rounded-full border border-white/10 relative overflow-hidden">
+                         <div 
+                           ref={leftMeterRef}
+                           className="absolute bottom-0 w-full transition-all duration-75 bg-green-500"
+                           style={{ height: '0%' }}
+                         />
+                     </div>
+                     <span className="text-[9px] font-mono text-neutral-500">L</span>
+                 </div>
+                 <div className="flex flex-col items-center gap-1 h-full">
+                     <div className="w-4 h-32 bg-neutral-900 rounded-full border border-white/10 relative overflow-hidden">
+                         <div 
+                           ref={rightMeterRef}
+                           className="absolute bottom-0 w-full transition-all duration-75 bg-green-500"
+                           style={{ height: '0%' }}
+                         />
+                     </div>
+                     <span className="text-[9px] font-mono text-neutral-500">R</span>
+                 </div>
              </div>
 
              <div className="lg:col-span-3 grid grid-cols-3 gap-4">
@@ -164,7 +188,7 @@ export const AudiophilePage: React.FC<AudiophilePageProps> = ({ sampleRate }) =>
                  </div>
                  <div className="glass-panel p-4 rounded-2xl flex flex-col items-center justify-center text-center">
                      <div className="text-[10px] text-neutral-500 uppercase tracking-widest font-bold mb-1">Peak Level</div>
-                     <div className="text-2xl font-mono text-white flex items-center gap-2">{dbLevels.left.toFixed(1)} <span className="text-xs text-neutral-500">dB</span></div>
+                     <div className="text-2xl font-mono text-white flex items-center gap-2"><span ref={peakLevelTextRef}>-60.0</span> <span className="text-xs text-neutral-500">dB</span></div>
                  </div>
              </div>
         </div>
@@ -173,13 +197,13 @@ export const AudiophilePage: React.FC<AudiophilePageProps> = ({ sampleRate }) =>
             <div className="glass-panel rounded-3xl p-6">
                 <h3 className="text-sm font-bold text-neutral-400 uppercase tracking-widest mb-4 flex items-center gap-2"><Activity size={14} /> Oscilloscope</h3>
                 <div className="bg-black/80 rounded-xl border border-white/10 overflow-hidden relative aspect-video shadow-inner">
-                    <canvas ref={scopeRef} width={600} height={340} className="w-full h-full" />
+                     <canvas ref={scopeRef} width={600} height={340} className="w-full h-full" />
                 </div>
             </div>
             <div className="glass-panel rounded-3xl p-6">
                 <h3 className="text-sm font-bold text-neutral-400 uppercase tracking-widest mb-4 flex items-center gap-2"><Move size={14} /> Stereo Phase (Lissajous)</h3>
                 <div className="bg-black/80 rounded-xl border border-white/10 overflow-hidden relative aspect-video shadow-inner flex items-center justify-center">
-                    <canvas ref={goniometerRef} width={340} height={340} className="w-[340px] h-[340px]" />
+                     <canvas ref={goniometerRef} width={340} height={340} className="w-[340px] h-[340px]" />
                 </div>
             </div>
         </div>
@@ -187,7 +211,7 @@ export const AudiophilePage: React.FC<AudiophilePageProps> = ({ sampleRate }) =>
         <div className="glass-panel rounded-3xl p-6">
             <h3 className="text-sm font-bold text-neutral-400 uppercase tracking-widest mb-4 flex items-center gap-2"><BarChart2 size={14} /> Spectrogram</h3>
             <div className="bg-black/80 rounded-xl border border-white/10 overflow-hidden relative aspect-[21/9] shadow-inner">
-                <canvas ref={canvasRef} width={1000} height={340} className="w-full h-full" />
+                 <canvas ref={canvasRef} width={1000} height={340} className="w-full h-full" />
             </div>
         </div>
       </div>

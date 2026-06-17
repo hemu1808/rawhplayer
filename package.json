@@ -12,16 +12,16 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@google/genai": "^1.30.0",
-    "@tauri-apps/api": "^1.5.3",
+    "@tauri-apps/api": "^2.9.1",
+    "jsmediatags": "^3.9.5",
     "lucide-react": "^0.344.0",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.2",
-    "@types/react": "^18.2.0",
-    "@types/react-dom": "^18.2.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.2.1",
     "autoprefixer": "^10.4.18",
     "postcss": "^8.4.35",

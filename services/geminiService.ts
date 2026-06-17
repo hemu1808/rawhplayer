@@ -1,29 +1,11 @@
-import { GoogleGenAI } from "@google/genai";
-
-let aiClient: GoogleGenAI | null = null;
-
-const getClient = (): GoogleGenAI => {
-  if (!aiClient) {
-    // The API key must be obtained exclusively from the environment variable process.env.API_KEY.
-    // We assume this variable is pre-configured, valid, and accessible.
-    aiClient = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  }
-  return aiClient;
-};
+import { invoke } from '@tauri-apps/api/core';
 
 export const getTrackInsight = async (artist: string, title: string): Promise<string> => {
   try {
-    const ai = getClient();
-    const prompt = `Provide a short, engaging 2-sentence "Vibe Check" description for the song "${title}" by "${artist}". Focus on the musical style, mood, and cultural impact. Do not use markdown formatting.`;
-    
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-    });
-
-    return response.text || "No insight available.";
+    const insight: string = await invoke('get_track_insight', { artist, title });
+    return insight;
   } catch (error) {
-    console.error("Error fetching Gemini insight:", error);
+    console.error("Error fetching Gemini insight from backend:", error);
     return "Could not retrieve AI insight at this time.";
   }
 };

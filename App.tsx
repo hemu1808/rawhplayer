@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Track, AudioState, PlaybackMode, EqualizerBand, DEFAULT_EQ_BANDS, ThemeColor, EQ_PRESETS } from './types';
+import { Track, AudioState, PlaybackMode, EqualizerBand, DEFAULT_EQ_BANDS, EQ_PRESETS } from './types';
 import { Controls } from './components/Controls';
 import { Visualizer } from './components/Visualizer';
 import { Navigation } from './components/Navigation';
@@ -14,21 +14,14 @@ import { Toast } from './components/Toast';
 import { QueueDrawer } from './components/QueueDrawer';
 import { Sparkles, Sliders, Waves, AudioWaveform, Zap } from 'lucide-react';
 import { getTrackInsight } from './services/geminiService';
-import 'jsmediatags';
+import jsmediatags from 'jsmediatags/dist/jsmediatags.min.js';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-
-// Enforce types for window globals
-declare global {
-    interface Window {
-        jsmediatags?: any;
-    }
-}
 
 type Page = 'player' | 'files' | 'settings' | 'connect' | 'search' | 'audiophile';
 
 const App: React.FC = () => {
-  const [activePage, setActivePage] = useState<Page>('player'); // Player is Default
+  const [activePage, setActivePage] = useState<Page>('player'); 
   const [tracks, setTracks] = useState<Track[]>([]);
   const [currentTrackIndex, setCurrentTrackIndex] = useState<number>(-1);
   const [showEq, setShowEq] = useState(false);
@@ -42,7 +35,7 @@ const App: React.FC = () => {
     volume: 1,
     isMuted: false,
     playbackRate: 1.0,
-    isPuristMode: true, // Default to Purist (Bit Perfect Intent)
+    isPuristMode: true, 
     sampleRate: 44100, 
     bufferSize: 2048,
     processingPrecision: '32-bit float'
@@ -55,31 +48,34 @@ const App: React.FC = () => {
   const [toastMsg, setToastMsg] = useState("");
   const [mouseIdle, setMouseIdle] = useState(false);
   
-  const [eqBands, setEqBands] = useState<EqualizerBand[]>(DEFAULT_EQ_BANDS.map(b => ({...b})));
+  const [eqBands, setEqBands] = useState<EqualizerBand[]>(DEFAULT_EQ_BANDS.map(b => ({ ...b })));
   const [currentPresetId, setCurrentPresetId] = useState<string>('manual');
   const [currentThemeId, setCurrentThemeId] = useState('reference');
   
-  // Audio Refs - The Core Engine
-  const mouseTimer = useRef<NodeJS.Timeout | null>(null);
-
+  const mouseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const currentTrack = tracks[currentTrackIndex];
 
   // --- MOUSE IDLE (Cinematic Feel) ---
   useEffect(() => {
     const handleMove = () => {
         setMouseIdle(false);
-        if(mouseTimer.current) clearTimeout(mouseTimer.current);
+        if (mouseTimer.current) clearTimeout(mouseTimer.current);
         mouseTimer.current = setTimeout(() => {
-            if (audioState.isPlaying && !showQueue && !showEq && !isDragging) setMouseIdle(true);
+            if (audioState.isPlaying && !showQueue && !showEq && !isDragging) {
+                setMouseIdle(true);
+            }
         }, 4000);
     };
     window.addEventListener('mousemove', handleMove);
-    return () => window.removeEventListener('mousemove', handleMove);
+    return () => {
+        window.removeEventListener('mousemove', handleMove);
+        if (mouseTimer.current) clearTimeout(mouseTimer.current);
+    };
   }, [audioState.isPlaying, showQueue, showEq, isDragging]);
 
   // --- TAURI EVENT LISTENERS ---
   useEffect(() => {
-      const unlistenPlayback = listen<any>('playback_update', (event) => {
+      const unlistenPlayback = listen<{ current_time: number, duration: number, is_playing: boolean }>('playback_update', (event) => {
           setAudioState(s => ({
               ...s,
               currentTime: event.payload.current_time,
@@ -87,7 +83,9 @@ const App: React.FC = () => {
               isPlaying: event.payload.is_playing
           }));
       });
-      return () => { unlistenPlayback.then(f => f()); };
+      return () => { 
+          unlistenPlayback.then(f => f()); 
+      };
   }, []);
 
   const showToast = (msg: string) => setToastMsg(msg);
@@ -96,9 +94,9 @@ const App: React.FC = () => {
   const extractMetadata = async (file: File): Promise<Partial<Track>> => {
       return new Promise((resolve) => {
           const meta: Partial<Track> = {};
-          if (!window.jsmediatags) { resolve(meta); return; }
+          if (!jsmediatags) { resolve(meta); return; }
 
-          window.jsmediatags.read(file, {
+          jsmediatags.read(file, {
               onSuccess: (tag: any) => {
                   if (tag.tags.title) meta.name = tag.tags.title;
                   if (tag.tags.artist) meta.artist = tag.tags.artist;
@@ -106,12 +104,9 @@ const App: React.FC = () => {
                   
                   if (tag.tags.picture) {
                       const { data, format } = tag.tags.picture;
-                      // Convert binary array to base64 string safely
-                      let base64String = "";
-                      for (let i = 0; i < data.length; i++) {
-                          base64String += String.fromCharCode(data[i]);
-                      }
-                      meta.image = `data:${format};base64,${window.btoa(base64String)}`;
+                      // Safe, zero-copy object URL instead of slow base64 loop
+                      const blob = new Blob([new Uint8Array(data)], { type: format });
+                      meta.image = URL.createObjectURL(blob);
                   }
                   resolve(meta);
               },
@@ -124,7 +119,6 @@ const App: React.FC = () => {
     const newTracks: Track[] = [];
     
     for (const file of Array.from(files)) {
-        // Strict Audio Filter
         const ext = file.name.split('.').pop()?.toLowerCase();
         if (!['mp3','flac','wav','ogg','aac','m4a','aiff','dsf','dff'].includes(ext || '')) continue;
 
@@ -157,7 +151,7 @@ const App: React.FC = () => {
         showToast(`Imported ${newTracks.length} tracks`);
         if (tracks.length === 0) {
              setCurrentTrackIndex(0);
-             setAudioState(prev => ({...prev, isPlaying: true }));
+             setAudioState(prev => ({ ...prev, isPlaying: true }));
         }
     }
   };
@@ -170,11 +164,17 @@ const App: React.FC = () => {
   }, [tracks]);
 
   useEffect(() => {
+      const handleDragOver = (e: DragEvent) => { e.preventDefault(); setIsDragging(true); };
+      const handleDragLeave = (e: DragEvent) => { e.preventDefault(); setIsDragging(false); };
+      
       window.addEventListener('drop', handleDragDrop);
-      window.addEventListener('dragover', (e) => { e.preventDefault(); setIsDragging(true); });
-      window.addEventListener('dragleave', (e) => { e.preventDefault(); setIsDragging(false); });
+      window.addEventListener('dragover', handleDragOver);
+      window.addEventListener('dragleave', handleDragLeave);
+      
       return () => {
           window.removeEventListener('drop', handleDragDrop);
+          window.removeEventListener('dragover', handleDragOver);
+          window.removeEventListener('dragleave', handleDragLeave);
       };
   }, [handleDragDrop]);
 
@@ -189,7 +189,7 @@ const App: React.FC = () => {
 
   const handlePrev = () => {
       if (audioState.currentTime > 3) {
-          invoke('seek_audio', { position: 0.0 });
+          invoke('seek_audio', { position: 0.0 }).catch(console.error);
           return;
       }
       let prev = currentTrackIndex - 1;
@@ -205,9 +205,9 @@ const App: React.FC = () => {
       invoke('toggle_play').catch(console.error);
   };
 
-  // Handle Playback State
+  // Handle Playback File Selection
   useEffect(() => {
-      if(currentTrack) {
+      if (currentTrack) {
           const path = (currentTrack.file as any).path || currentTrack.path;
           if (path) {
               invoke('play_file', { path }).catch(console.error);
@@ -217,18 +217,20 @@ const App: React.FC = () => {
       }
   }, [currentTrackIndex]); 
 
+  // Handle Volume Synchronization
   useEffect(() => {
       invoke('set_volume', { volume: audioState.isMuted ? 0.0 : audioState.volume }).catch(console.error);
   }, [audioState.volume, audioState.isMuted]);
 
-  // Track End Auto-Next logic
+  // Track End Auto-Next logic via native events (H-1 / R-5 Fix)
   useEffect(() => {
-      if (audioState.duration > 0 && audioState.duration - audioState.currentTime < 0.5) {
-          if (audioState.isPlaying) {
-             handleNext();
-          }
-      }
-  }, [audioState.currentTime, audioState.duration]);
+      const unlistenEnded = listen('track_ended', () => {
+          handleNext();
+      });
+      return () => {
+          unlistenEnded.then(f => f());
+      };
+  }, [handleNext]);
 
   // AI Insights
   const generateInsight = async () => {
@@ -239,21 +241,47 @@ const App: React.FC = () => {
       setIsLoadingInsight(false);
   };
 
+  // Keyboard Shortcuts (A-2)
+  useEffect(() => {
+      const handleKeyDown = (e: KeyboardEvent) => {
+          // Ignore shortcuts when inside form elements
+          if (document.activeElement?.tagName === 'INPUT' || 
+              document.activeElement?.tagName === 'SELECT' || 
+              document.activeElement?.tagName === 'TEXTAREA') {
+              return;
+          }
+          
+          if (e.code === 'Space') {
+              e.preventDefault();
+              handlePlayPause();
+          } else if (e.code === 'ArrowRight') {
+              e.preventDefault();
+              invoke('seek_audio', { position: Math.min(audioState.duration, audioState.currentTime + 5.0) }).catch(console.error);
+          } else if (e.code === 'ArrowLeft') {
+              e.preventDefault();
+              invoke('seek_audio', { position: Math.max(0.0, audioState.currentTime - 5.0) }).catch(console.error);
+          }
+      };
+      
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [audioState.currentTime, audioState.duration, currentTrackIndex, tracks]);
+
   // --- RENDER SECTION ---
   const renderContent = () => {
       switch (activePage) {
           case 'files':
               return <FilesPage 
                   tracks={tracks} 
-                  onPlay={(t) => { setCurrentTrackIndex(tracks.indexOf(t)); setAudioState(s => ({...s, isPlaying: true})); setActivePage('player'); }}
-                  onUpload={(e) => { if(e.target.files) processFiles(e.target.files); }}
-                  onPlayNext={(id) => { const idx = tracks.findIndex(t => t.id === id); if(idx !== -1) { /* Logic handled by queue usually */ showToast("Queued Next"); }}}
+                  onPlay={(t) => { setCurrentTrackIndex(tracks.indexOf(t)); setAudioState(s => ({ ...s, isPlaying: true })); setActivePage('player'); }}
+                  onUpload={(e) => { if (e.target.files) processFiles(e.target.files); }}
+                  onPlayNext={(id) => { const idx = tracks.findIndex(t => t.id === id); if (idx !== -1) { showToast("Queued Next"); } }}
                   onAddToQueue={(id) => showToast("Added to Queue")}
                   onRemove={(id) => setTracks(prev => prev.filter(t => t.id !== id))}
               />;
           case 'search':
               return <SearchPage tracks={tracks} onPlay={(t) => {
-                  setTracks(prev => [t, ...prev]); setCurrentTrackIndex(0); setAudioState(s => ({...s, isPlaying: true})); setActivePage('player');
+                  setTracks(prev => [t, ...prev]); setCurrentTrackIndex(0); setAudioState(s => ({ ...s, isPlaying: true })); setActivePage('player');
               }} />;
           case 'audiophile':
               return <AudiophilePage sampleRate={audioState.sampleRate} />
@@ -261,19 +289,21 @@ const App: React.FC = () => {
               return <ConnectPage onPlayUrl={(url) => { /* stream logic */ }} />;
           case 'settings':
               return <SettingsPage 
-                 currentThemeId={currentThemeId} 
-                 onThemeChange={(t) => {
-                     setCurrentThemeId(t.id);
-                     document.documentElement.style.setProperty('--primary-500', t.colors[500]);
-                     document.documentElement.style.setProperty('--primary-900', t.colors[900]);
-                 }} 
-                 isPuristMode={audioState.isPuristMode}
-                 onTogglePurist={() => setAudioState(s => ({...s, isPuristMode: !s.isPuristMode}))}
-                 onTogglePrecision={() => setAudioState(s => ({...s, processingPrecision: s.processingPrecision === '16-bit' ? '32-bit float' : '16-bit'}))}
+                  currentThemeId={currentThemeId} 
+                  onThemeChange={(t) => {
+                      setCurrentThemeId(t.id);
+                      document.documentElement.style.setProperty('--primary-500', t.colors[500]);
+                      document.documentElement.style.setProperty('--primary-900', t.colors[900]);
+                  }} 
+                  isPuristMode={audioState.isPuristMode}
+                  onTogglePurist={() => setAudioState(s => ({ ...s, isPuristMode: !s.isPuristMode }))}
+                  processingPrecision={audioState.processingPrecision}
+                  onTogglePrecision={() => setAudioState(s => ({ ...s, processingPrecision: s.processingPrecision === '16-bit' ? '32-bit float' : '16-bit' }))}
+                  bufferSize={audioState.bufferSize}
+                  onBufferSizeChange={(size) => setAudioState(s => ({ ...s, bufferSize: size }))}
               />;
           case 'player':
           default:
-              // --- THE PLAYER UI ---
               return (
                 <div className="h-full flex flex-col items-center justify-center p-6 relative overflow-hidden">
                     {/* Cinematic Background Blur */}
@@ -355,7 +385,7 @@ const App: React.FC = () => {
                         {/* Floating Tools Dock */}
                         <div className="hidden xl:flex flex-col gap-4 justify-center absolute right-8 top-1/2 -translate-y-1/2">
                             <button 
-                                onClick={() => { setShowEq(true); setAudioState(s => ({...s, isPuristMode: false})); }} 
+                                onClick={() => { setShowEq(true); setAudioState(s => ({ ...s, isPuristMode: false })); }} 
                                 className={`w-14 h-14 rounded-2xl border flex items-center justify-center transition-all duration-300 shadow-xl ${!audioState.isPuristMode ? 'bg-primary-500 border-primary-400 text-black scale-110' : 'bg-black/40 border-white/10 backdrop-blur text-neutral-400 hover:text-white hover:bg-white/10'}`}
                                 title="Equalizer"
                             >
@@ -383,7 +413,7 @@ const App: React.FC = () => {
           <Navigation activePage={activePage} onNavigate={setActivePage} />
           
           <main className="flex-1 relative z-10 flex flex-col min-w-0">
-             {renderContent()}
+              {renderContent()}
           </main>
           
           <QueueDrawer 
@@ -391,9 +421,9 @@ const App: React.FC = () => {
              currentTrackId={currentTrack?.id || null}
              isOpen={showQueue} 
              onClose={() => setShowQueue(false)}
-             onSelect={(t) => { setCurrentTrackIndex(tracks.indexOf(t)); setAudioState(s => ({...s, isPlaying: true})); }}
+             onSelect={(t) => { setCurrentTrackIndex(tracks.indexOf(t)); setAudioState(s => ({ ...s, isPlaying: true })); }}
              onRemove={(id) => setTracks(prev => prev.filter(t => t.id !== id))}
-             onShuffle={() => { /* Logic */ }}
+             onShuffle={() => {}}
              onClear={() => setTracks([])}
           />
           
@@ -402,16 +432,18 @@ const App: React.FC = () => {
              onClose={() => setShowEq(false)}
              bands={eqBands}
              onBandChange={(i, val) => {
-                 const newBands = [...eqBands];
-                 newBands[i].gain = val;
-                 setEqBands(newBands);
+                 setEqBands(prev => {
+                     const next = [...prev];
+                     next[i] = { ...next[i], gain: val };
+                     return next;
+                 });
              }}
-             onReset={() => setEqBands(DEFAULT_EQ_BANDS.map(b => ({...b})))}
+             onReset={() => setEqBands(DEFAULT_EQ_BANDS.map(b => ({ ...b })))}
              currentPresetId={currentPresetId}
              onPresetChange={(id) => {
                  setCurrentPresetId(id);
                  const p = EQ_PRESETS.find(x => x.id === id);
-                 if(p) setEqBands(p.bands.map(b => ({...b})));
+                 if (p) setEqBands(p.bands.map(b => ({ ...b })));
              }}
           />
       </div>
@@ -424,12 +456,12 @@ const App: React.FC = () => {
             onNext={handleNext}
             onPrev={handlePrev}
             onSeek={(t) => invoke('seek_audio', { position: t })}
-            onVolumeChange={(v) => setAudioState(s => ({...s, volume: v, isMuted: v === 0}))}
-            onToggleMute={() => setAudioState(s => ({...s, isMuted: !s.isMuted}))}
+            onVolumeChange={(v) => setAudioState(s => ({ ...s, volume: v, isMuted: v === 0 }))}
+            onToggleMute={() => setAudioState(s => ({ ...s, isMuted: !s.isMuted }))}
             playbackMode={playbackMode}
             onToggleMode={() => {}}
             onToggleLike={() => {}}
-            onSpeedChange={(r) => setAudioState(s => ({...s, playbackRate: r}))}
+            onSpeedChange={(r) => setAudioState(s => ({ ...s, playbackRate: r }))}
             showQueue={showQueue}
             onToggleQueue={() => setShowQueue(!showQueue)}
         />
