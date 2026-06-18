@@ -22,6 +22,8 @@ pub struct AudioState {
     stream_handle: OutputStreamHandle,
     current_path: Option<String>,
     duration: f64,
+    pub channels: u16,
+    pub volume: f32,
     app_handle: AppHandle,
 }
 
@@ -100,6 +102,8 @@ impl AudioEngine {
             stream_handle,
             current_path: None,
             duration: 0.0,
+            channels: 2,
+            volume: 1.0,
             app_handle: app_handle.clone(),
         }));
 
@@ -109,27 +113,47 @@ impl AudioEngine {
         let fft_buffer_clone = fft_buffer.clone();
         let app_handle_clone = app_handle.clone();
         let shutdown_clone1 = shutdown.clone();
+        let state_clone_fft = state.clone();
         thread::spawn(move || {
             let mut planner = FftPlanner::new();
             let fft = planner.plan_fft_forward(1024);
+            let mut last_channels = 2;
             
             while !shutdown_clone1.load(Ordering::Relaxed) {
                 thread::sleep(Duration::from_millis(33)); // ~30fps
                 
-                let mut samples = Vec::with_capacity(1024);
+                let mut channels = last_channels;
+                if let Some(state_lock) = state_clone_fft.try_lock() {
+                    channels = state_lock.channels;
+                    last_channels = channels;
+                }
+                
+                let required_samples = if channels == 2 { 2048 } else { 1024 };
+                let mut samples = Vec::with_capacity(required_samples);
                 if let Some(buf_lock) = fft_buffer_clone.try_lock() {
-                    if buf_lock.len() >= 1024 {
-                        samples = buf_lock.iter().rev().take(1024).copied().collect();
+                    if buf_lock.len() >= required_samples {
+                        samples = buf_lock.iter().rev().take(required_samples).copied().collect();
                         samples.reverse();
                     }
                 }
                 
                 if !samples.is_empty() {
-                    let n = samples.len();
-                    let mut buffer: Vec<Complex<f32>> = samples.iter().enumerate()
+                    let mono_samples = if channels == 2 {
+                        let mut downmixed = Vec::with_capacity(1024);
+                        for chunk in samples.chunks_exact(2) {
+                            downmixed.push((chunk[0] + chunk[1]) * 0.5);
+                        }
+                        downmixed
+                    } else {
+                        samples.clone()
+                    };
+                    
+                    let n = mono_samples.len();
+                    let n_f = if n > 1 { (n - 1) as f32 } else { 1.0 };
+                    let mut buffer: Vec<Complex<f32>> = mono_samples.iter().enumerate()
                         .map(|(i, &s)| {
                             // Apply Hann window to reduce spectral leakage
-                            let window = 0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / (n - 1) as f32).cos());
+                            let window = 0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / n_f).cos());
                             Complex { re: s * window, im: 0.0 }
                         })
                         .collect();
@@ -141,7 +165,8 @@ impl AudioEngine {
                         .map(|c| c.norm())
                         .collect();
                         
-                    let waveform: Vec<f32> = samples.iter().take(512).copied().collect();
+                    // Send 1024 samples (512 L/R frames) for visualization
+                    let waveform: Vec<f32> = samples.iter().take(1024).copied().collect();
                     
                     let _ = app_handle_clone.emit("fft_data", FftUpdate { fft: magnitudes, waveform });
                 }
@@ -254,12 +279,14 @@ impl AudioEngine {
 
         let sink = Sink::try_new(&state.stream_handle)
             .map_err(|e| format!("Failed to create audio Sink: {}", e))?;
+        sink.set_volume(state.volume);
 
         let file = File::open(&path)
             .map_err(|e| format!("Failed to open file: {}", e))?;
         let decoder = Decoder::new(BufReader::new(file))
             .map_err(|e| format!("Decoder failed to parse file: {}", e))?;
         
+        let file_channels = decoder.channels();
         let f32_source = decoder.convert_samples::<f32>();
         
         // Use probed duration as primary, fallback to rodio's duration if available
@@ -289,6 +316,7 @@ impl AudioEngine {
 
         state.sink = Some(sink);
         state.current_path = Some(path);
+        state.channels = file_channels;
 
         Ok(())
     }
@@ -303,8 +331,10 @@ impl AudioEngine {
                 info!("Pausing audio playback.");
                 sink.pause();
             }
+            Ok(())
+        } else {
+            Err("No track loaded".to_string())
         }
-        Ok(())
     }
 
     pub fn seek(&self, position: f64) -> Result<(), String> {
@@ -319,15 +349,18 @@ impl AudioEngine {
             info!("Seeking to position: {:.2}s", position);
             sink.try_seek(Duration::from_secs_f64(position))
                 .map_err(|e| format!("Seek failed: {}", e))?;
+            Ok(())
+        } else {
+            Err("No track loaded".to_string())
         }
-        Ok(())
     }
 
     pub fn set_volume(&self, volume: f32) -> Result<(), String> {
         if volume < 0.0 || volume > 1.0 {
             return Err("Volume must be between 0.0 and 1.0".to_string());
         }
-        let state = self.state.lock();
+        let mut state = self.state.lock();
+        state.volume = volume;
         if let Some(sink) = &state.sink {
             sink.set_volume(volume);
         }

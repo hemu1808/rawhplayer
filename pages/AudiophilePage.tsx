@@ -1,6 +1,6 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ScrollArea } from '../components/ScrollArea';
-import { Activity, Zap, Cpu, Waves, Radar, Move, BarChart2 } from 'lucide-react';
+import { Activity, Zap, Cpu, Waves, Move, BarChart2 } from 'lucide-react';
 import { listen } from '@tauri-apps/api/event';
 
 interface AudiophilePageProps {
@@ -18,6 +18,15 @@ export const AudiophilePage: React.FC<AudiophilePageProps> = ({ sampleRate }) =>
   const peakLevelTextRef = useRef<HTMLSpanElement>(null);
   
   const fftDataRef = useRef<{ fft: number[], waveform: number[] }>({ fft: [], waveform: [] });
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    setPrefersReducedMotion(mediaQuery.matches);
+    const handler = (e: MediaQueryListEvent) => setPrefersReducedMotion(e.matches);
+    mediaQuery.addEventListener('change', handler);
+    return () => mediaQuery.removeEventListener('change', handler);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -47,6 +56,17 @@ export const AudiophilePage: React.FC<AudiophilePageProps> = ({ sampleRate }) =>
   }, []);
 
   useEffect(() => {
+    if (prefersReducedMotion) {
+        // Clear all canvases if user prefers reduced motion
+        const canvas = canvasRef.current;
+        const scopeCanvas = scopeRef.current;
+        const gonioCanvas = goniometerRef.current;
+        if (canvas) canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
+        if (scopeCanvas) scopeCanvas.getContext('2d')?.clearRect(0, 0, scopeCanvas.width, scopeCanvas.height);
+        if (gonioCanvas) gonioCanvas.getContext('2d')?.clearRect(0, 0, gonioCanvas.width, gonioCanvas.height);
+        return;
+    }
+
     // Create offscreen canvas for spectrogram shifting
     const tempCanvas = document.createElement('canvas');
     tempCanvas.width = 1000;
@@ -103,11 +123,11 @@ export const AudiophilePage: React.FC<AudiophilePageProps> = ({ sampleRate }) =>
             count = waveform.length;
         }
         
-        const rmsL = count > 0 ? Math.sqrt(sumL / count) : 0.0000001;
-        const rmsR = count > 0 ? Math.sqrt(sumR / count) : 0.0000001;
+        const rmsL = count > 0 ? Math.sqrt(sumL / count) : 0;
+        const rmsR = count > 0 ? Math.sqrt(sumR / count) : 0;
         
-        const dbL = 20 * Math.log10(rmsL || 0.0000001);
-        const dbR = 20 * Math.log10(rmsR || 0.0000001);
+        const dbL = rmsL > 0 ? 20 * Math.log10(rmsL) : -60;
+        const dbR = rmsR > 0 ? 20 * Math.log10(rmsR) : -60;
         
         const leftDb = Math.max(-60, dbL);
         const rightDb = Math.max(-60, dbR);
@@ -187,7 +207,7 @@ export const AudiophilePage: React.FC<AudiophilePageProps> = ({ sampleRate }) =>
     };
     draw();
     return () => cancelAnimationFrame(rafRef.current);
-  }, []);
+  }, [prefersReducedMotion]);
 
   return (
     <ScrollArea title="Audiophile" subtitle="Advanced Signal Analysis">
@@ -250,13 +270,13 @@ export const AudiophilePage: React.FC<AudiophilePageProps> = ({ sampleRate }) =>
             <div className="glass-panel rounded-3xl p-6">
                 <h3 className="text-sm font-bold text-neutral-400 uppercase tracking-widest mb-4 flex items-center gap-2"><Activity size={14} /> Oscilloscope</h3>
                 <div className="bg-black/80 rounded-xl border border-white/10 overflow-hidden relative aspect-video shadow-inner">
-                     <canvas ref={scopeRef} width={600} height={340} className="w-full h-full" />
+                     <canvas ref={scopeRef} role="img" aria-label="Audio Oscilloscope Waveform Display" width={600} height={340} className="w-full h-full" />
                 </div>
             </div>
             <div className="glass-panel rounded-3xl p-6">
                 <h3 className="text-sm font-bold text-neutral-400 uppercase tracking-widest mb-4 flex items-center gap-2"><Move size={14} /> Stereo Phase (Lissajous)</h3>
                 <div className="bg-black/80 rounded-xl border border-white/10 overflow-hidden relative aspect-video shadow-inner flex items-center justify-center">
-                     <canvas ref={goniometerRef} width={340} height={340} className="w-[340px] h-[340px]" />
+                     <canvas ref={goniometerRef} role="img" aria-label="Stereo Phase Goniometer Lissajous Plot" width={340} height={340} className="w-[340px] h-[340px]" />
                 </div>
             </div>
         </div>
@@ -264,7 +284,7 @@ export const AudiophilePage: React.FC<AudiophilePageProps> = ({ sampleRate }) =>
         <div className="glass-panel rounded-3xl p-6">
             <h3 className="text-sm font-bold text-neutral-400 uppercase tracking-widest mb-4 flex items-center gap-2"><BarChart2 size={14} /> Spectrogram</h3>
             <div className="bg-black/80 rounded-xl border border-white/10 overflow-hidden relative aspect-[21/9] shadow-inner">
-                 <canvas ref={canvasRef} width={1000} height={340} className="w-full h-full" />
+                 <canvas ref={canvasRef} role="img" aria-label="Audio Spectrogram Analysis" width={1000} height={340} className="w-full h-full" />
             </div>
         </div>
       </div>

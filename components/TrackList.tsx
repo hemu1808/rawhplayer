@@ -86,11 +86,20 @@ export const TrackList: React.FC<TrackListProps> = ({
             filteredTracks.map((track, index) => (
             <div 
                 key={track.id}
+                role="button"
+                tabIndex={0}
+                aria-label={`${currentTrackId === track.id ? 'Now Playing: ' : ''}Play ${track.name} by ${track.artist}`}
+                onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        onSelect(track);
+                    }
+                }}
                 className={`group relative flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-all duration-300 border ${
                     currentTrackId === track.id 
                     ? 'bg-white/10 border-white/10 shadow-lg backdrop-blur-md' 
                     : 'border-transparent hover:bg-white/5 hover:border-white/5'
-                }`}
+                } focus:outline-none focus:ring-1 focus:ring-primary-500`}
                 onClick={() => onSelect(track)}
             >
                 {/* Track Number / Playing Indicator */}
@@ -127,8 +136,9 @@ export const TrackList: React.FC<TrackListProps> = ({
                         e.stopPropagation();
                         onRemove(track.id);
                     }}
-                    className="opacity-0 group-hover:opacity-100 p-2 text-neutral-500 hover:text-red-400 transition absolute right-2 hover:bg-white/10 rounded-md bg-black/50 backdrop-blur-sm"
+                    className="opacity-0 group-hover:opacity-100 p-2 text-neutral-500 hover:text-red-400 transition absolute right-2 hover:bg-white/10 rounded-md bg-black/50 backdrop-blur-sm focus:opacity-100"
                     title="Remove"
+                    aria-label={`Remove ${track.name} from collection`}
                 >
                     <Trash2 size={12} strokeWidth={1.5} />
                 </button>

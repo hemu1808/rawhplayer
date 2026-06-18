@@ -27,5 +27,11 @@ symphonia = { version = "0.5.4", features = ["all"] }
 rustfft = "6.4.1"
 parking_lot = "0.12.5"
 rodio = { version = "0.19.0", features = ["symphonia-all"] }
-thiserror = "1.0"
 reqwest = { version = "0.12", features = ["json"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

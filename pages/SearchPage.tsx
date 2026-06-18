@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { Track } from '../types';
-import { Search, Play, Heart, FileAudio, Youtube, Globe, Library } from 'lucide-react';
+import { Search, Play, FileAudio, Youtube, Library } from 'lucide-react';
 import { ScrollArea } from '../components/ScrollArea';
 import { searchYouTube } from '../services/youtubeService';
 
@@ -71,6 +71,7 @@ export const SearchPage: React.FC<SearchPageProps> = ({ tracks, onPlay }) => {
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                     placeholder={sourceMode === 'youtube' ? "Search YouTube..." : "Search artists, tracks, formats..."} 
+                    aria-label={sourceMode === 'youtube' ? "Search YouTube" : "Search library"}
                     className="relative z-10 w-full bg-black/40 backdrop-blur-xl border border-white/10 focus:border-primary-500/50 rounded-2xl py-5 pl-14 pr-4 text-xl text-white placeholder:text-neutral-600 outline-none transition-all font-light shadow-2xl"
                 />
                 <Search className="absolute z-20 left-5 top-1/2 -translate-y-1/2 text-neutral-600 group-focus-within:text-primary-500 transition-colors" size={24} />
@@ -93,12 +94,21 @@ export const SearchPage: React.FC<SearchPageProps> = ({ tracks, onPlay }) => {
                 {!isSearching && activeResults.map((track) => (
                      <div 
                         key={track.id}
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`Play search result: ${track.name} by ${track.artist}`}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                onPlay(track);
+                            }
+                        }}
                         onClick={() => onPlay(track)}
-                        className="group flex items-center gap-5 p-4 rounded-2xl hover:bg-white/5 cursor-pointer transition-all border border-transparent hover:border-white/5"
+                        className="group flex items-center gap-5 p-4 rounded-2xl hover:bg-white/5 cursor-pointer transition-all border border-transparent hover:border-white/5 focus:outline-none focus:ring-1 focus:ring-primary-500"
                     >
                         <div className="w-14 h-14 bg-neutral-900 rounded-xl flex items-center justify-center text-neutral-600 group-hover:text-white transition-colors border border-white/5 shadow-lg overflow-hidden relative">
                             {track.image ? (
-                                <img src={track.image} className="w-full h-full object-cover" />
+                                <img src={track.image} alt={`${track.name} album art`} className="w-full h-full object-cover" />
                             ) : (
                                 <FileAudio size={24} strokeWidth={1.5} />
                             )}
@@ -115,7 +125,10 @@ export const SearchPage: React.FC<SearchPageProps> = ({ tracks, onPlay }) => {
                             </div>
                             <p className="text-neutral-500 text-sm truncate">{track.artist}</p>
                         </div>
-                        <button className={`w-10 h-10 rounded-full text-black flex items-center justify-center transition-all transform scale-50 opacity-0 group-hover:scale-100 group-hover:opacity-100 shadow-[0_0_15px_rgba(var(--primary-500),0.5)] ${track.source === 'youtube' ? 'bg-red-500' : 'bg-primary-500'}`}>
+                        <button 
+                            className={`w-10 h-10 rounded-full text-black flex items-center justify-center transition-all transform scale-50 opacity-0 group-hover:scale-100 group-hover:opacity-100 shadow-[0_0_15px_rgba(var(--primary-500),0.5)] ${track.source === 'youtube' ? 'bg-red-500' : 'bg-primary-500'} focus:opacity-100 focus:scale-100`}
+                            aria-label={`Play ${track.name}`}
+                        >
                             <Play size={16} fill="currentColor" className="ml-0.5" />
                         </button>
                     </div>

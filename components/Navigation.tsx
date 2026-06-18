@@ -11,9 +11,10 @@ interface NavigationProps {
 }
 
 export const Navigation: React.FC<NavigationProps> = ({ activePage, onNavigate }) => {
-  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
+    setIsMobile(window.innerWidth < 768);
     const handleResize = () => setIsMobile(window.innerWidth < 768);
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
@@ -31,7 +32,7 @@ export const Navigation: React.FC<NavigationProps> = ({ activePage, onNavigate }
   if (isMobile) {
       // MOBILE LAYOUT: Bottom Tab Bar (iOS Style)
       return (
-        <div className="fixed bottom-0 left-0 right-0 h-20 bg-neutral-950/90 backdrop-blur-xl border-t border-white/10 z-[90] flex items-center justify-around px-2 pb-safe">
+        <nav aria-label="Mobile navigation bar" className="fixed bottom-0 left-0 right-0 h-20 bg-neutral-950/90 backdrop-blur-xl border-t border-white/10 z-[90] flex items-center justify-around px-2 pb-safe">
             {navItems.map((item) => {
                 const isActive = activePage === item.id;
                 return (
@@ -39,24 +40,28 @@ export const Navigation: React.FC<NavigationProps> = ({ activePage, onNavigate }
                         key={item.id}
                         onClick={() => onNavigate(item.id)}
                         className={`flex flex-col items-center justify-center gap-1 w-full h-full ${isActive ? 'text-primary-500' : 'text-neutral-500'}`}
+                        aria-label={`Go to ${item.label} page`}
+                        aria-current={isActive ? 'page' : undefined}
                     >
                         <item.icon size={22} strokeWidth={isActive ? 2.5 : 1.5} />
                         <span className="text-[9px] font-medium">{item.label}</span>
                     </button>
                 )
             })}
-        </div>
+        </nav>
       );
   }
 
   // DESKTOP LAYOUT: Sidebar (Mac/Windows Style)
   return (
-    <div className="w-20 h-full bg-transparent flex flex-col items-center py-6 z-50 relative shrink-0 border-r border-white/0">
+    <nav aria-label="Desktop sidebar navigation" className="w-20 h-full bg-transparent flex flex-col items-center py-6 z-50 relative shrink-0 border-r border-white/0">
       <div className="mb-8 mt-2">
         <button 
             onClick={() => onNavigate('player')}
             className={`w-12 h-12 rounded-2xl flex items-center justify-center border shadow-[0_0_20px_rgba(var(--primary-500),0.1)] group hover:bg-white/10 transition-all duration-300 ${activePage === 'player' ? 'bg-primary-500 border-primary-400 text-black' : 'bg-white/5 border-white/5 backdrop-blur-md'}`}
             title="Now Playing"
+            aria-label="Go to Player page"
+            aria-current={activePage === 'player' ? 'page' : undefined}
         >
           <Logo className={`w-6 h-6 group-hover:scale-110 transition-transform duration-500 ${activePage === 'player' ? 'text-black' : 'text-primary-500'}`} />
         </button>
@@ -74,6 +79,8 @@ export const Navigation: React.FC<NavigationProps> = ({ activePage, onNavigate }
                         ? 'bg-white/10 backdrop-blur-md shadow-lg translate-y-0' 
                         : 'bg-transparent hover:bg-white/5'
                     }`}
+                    aria-label={`Go to ${item.label} page`}
+                    aria-current={isActive ? 'page' : undefined}
                 >
                     <item.icon
                         size={20}
@@ -98,6 +105,6 @@ export const Navigation: React.FC<NavigationProps> = ({ activePage, onNavigate }
             );
         })}
       </div>
-    </div>
+    </nav>
   );
 };

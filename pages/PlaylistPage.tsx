@@ -30,18 +30,27 @@ const TrackRow: React.FC<TrackRowProps> = memo(({
   onRemove
 }) => (
     <div 
+        role="button"
+        tabIndex={0}
+        aria-label={`${isHistory ? 'Previously played: ' : isPlaying ? 'Now Playing: ' : ''}Play ${track.name} by ${track.artist}`}
+        onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onSelect(track);
+            }
+        }}
         className={`flex items-center gap-4 p-3 rounded-xl border transition-all duration-300 group cursor-pointer ${
             isPlaying
             ? 'bg-white/10 backdrop-blur-md border-primary-500/30 shadow-lg scale-[1.02] z-10' 
             : isHistory 
                 ? 'opacity-50 hover:opacity-100 border-transparent hover:bg-white/5' 
                 : 'bg-white/[0.02] border-white/5 hover:bg-white/10 hover:border-white/10'
-        }`}
+        } focus:outline-none focus:ring-1 focus:ring-primary-500`}
         onClick={() => onSelect(track)}
     >
         <div className="w-10 h-10 rounded-lg bg-neutral-900 border border-white/10 overflow-hidden shrink-0 relative flex items-center justify-center">
             {track.image ? (
-                <img src={track.image} className={`w-full h-full object-cover ${isHistory ? 'grayscale' : ''}`} alt="" />
+                <img src={track.image} className={`w-full h-full object-cover ${isHistory ? 'grayscale' : ''}`} alt={`${track.name} album art`} />
             ) : (
                 <AudioWaveform size={16} className="text-neutral-600" />
             )}
@@ -67,8 +76,9 @@ const TrackRow: React.FC<TrackRowProps> = memo(({
             <span className="text-[9px] text-neutral-600 font-bold uppercase tracking-wider bg-black/20 px-1.5 py-0.5 rounded border border-white/5">{track.format || 'RAW'}</span>
             <button 
                 onClick={(e) => { e.stopPropagation(); onRemove(track.id); }}
-                className="w-6 h-6 flex items-center justify-center text-neutral-600 hover:text-red-500 hover:bg-red-500/10 rounded-full transition-all opacity-0 group-hover:opacity-100"
+                className="w-6 h-6 flex items-center justify-center text-neutral-600 hover:text-red-500 hover:bg-red-500/10 rounded-full transition-all opacity-0 group-hover:opacity-100 focus:opacity-100"
                 title="Remove from queue"
+                aria-label={`Remove ${track.name} from queue`}
             >
                 <Trash2 size={14} />
             </button>

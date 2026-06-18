@@ -26,6 +26,16 @@ export const Equalizer: React.FC<EqualizerProps> = ({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef<number>(0);
   const fftDataRef = useRef<number[]>(new Array(512).fill(0));
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    setPrefersReducedMotion(mediaQuery.matches);
+    const handler = (e: MediaQueryListEvent) => setPrefersReducedMotion(e.matches);
+    mediaQuery.addEventListener('change', handler);
+    return () => mediaQuery.removeEventListener('change', handler);
+  }, []);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -58,7 +68,7 @@ export const Equalizer: React.FC<EqualizerProps> = ({
 
   // RTA Visualization Loop
   useEffect(() => {
-    if (!isOpen || !canvasRef.current) return;
+    if (!isOpen || !canvasRef.current || prefersReducedMotion) return;
     
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
@@ -93,6 +103,46 @@ export const Equalizer: React.FC<EqualizerProps> = ({
     
     return () => cancelAnimationFrame(rafRef.current);
 
+  }, [isOpen, prefersReducedMotion]);
+
+  useEffect(() => {
+      const handleKeyDown = (e: KeyboardEvent) => {
+          if (e.key === 'Escape' && isOpen) {
+              onClose();
+              return;
+          }
+          if (e.key === 'Tab' && isOpen && containerRef.current) {
+              const focusables = containerRef.current.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+              if (focusables.length > 0) {
+                  const first = focusables[0] as HTMLElement;
+                  const last = focusables[focusables.length - 1] as HTMLElement;
+                  if (e.shiftKey) {
+                      if (document.activeElement === first) {
+                          last.focus();
+                          e.preventDefault();
+                      }
+                  } else {
+                      if (document.activeElement === last) {
+                          first.focus();
+                          e.preventDefault();
+                      }
+                  }
+              }
+          }
+      };
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
+  useEffect(() => {
+      if (isOpen) {
+          setTimeout(() => {
+              const focusables = containerRef.current?.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+              if (focusables && focusables.length > 0) {
+                  (focusables[0] as HTMLElement).focus();
+              }
+          }, 50);
+      }
   }, [isOpen]);
 
   if (!isOpen) return null;
@@ -102,7 +152,13 @@ export const Equalizer: React.FC<EqualizerProps> = ({
   };
 
   return (
-    <div className="absolute inset-y-0 right-0 w-full md:w-[450px] bg-neutral-900/95 backdrop-blur-3xl border-l border-white/10 shadow-[0_0_100px_rgba(0,0,0,0.9)] z-[90] animate-in slide-in-from-right duration-400 ease-out flex flex-col font-sans">
+    <div 
+      ref={containerRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="eq-title"
+      className="absolute inset-y-0 right-0 w-full md:w-[450px] bg-neutral-900/95 backdrop-blur-3xl border-l border-white/10 shadow-[0_0_100px_rgba(0,0,0,0.9)] z-[90] animate-in slide-in-from-right duration-400 ease-out flex flex-col font-sans"
+    >
         
         {/* Pro Header */}
         <div className="flex items-center justify-between p-6 border-b border-white/5 bg-gradient-to-b from-white/5 to-transparent shrink-0">
@@ -111,7 +167,7 @@ export const Equalizer: React.FC<EqualizerProps> = ({
                      <Activity size={20} />
                 </div>
                 <div>
-                    <h3 className="font-bold text-white tracking-wide text-sm">Parametric EQ</h3>
+                    <h3 id="eq-title" className="font-bold text-white tracking-wide text-sm">Parametric EQ</h3>
                     <p className="text-[11px] text-primary-500/80 font-mono flex items-center gap-1">
                         <Zap size={10} /> MASTER OUTPUT
                     </p>
@@ -122,12 +178,14 @@ export const Equalizer: React.FC<EqualizerProps> = ({
                     onClick={onReset} 
                     className="p-2.5 bg-white/5 hover:bg-white/10 border border-white/5 rounded-full text-neutral-400 hover:text-white transition-all active:scale-95" 
                     title="Reset to Flat"
+                    aria-label="Reset equalizer to flat"
                 >
                     <RotateCcw size={16} />
                 </button>
                 <button 
                     onClick={onClose} 
                     className="p-2.5 bg-white/5 hover:bg-red-500/20 border border-white/5 rounded-full text-neutral-400 hover:text-red-400 transition-all active:scale-95"
+                    aria-label="Close equalizer"
                 >
                     <X size={16} />
                 </button>
@@ -175,7 +233,7 @@ export const Equalizer: React.FC<EqualizerProps> = ({
         <div className="flex-1 p-6 pb-2 overflow-y-auto custom-scrollbar bg-neutral-900/50">
              <div className="grid grid-cols-10 gap-1 h-full min-h-[300px]">
                 {bands.map((band, index) => (
-                    <div key={band.frequency} className="flex flex-col items-center h-full group relative">
+                    <div key={`${band.frequency}-${index}`} className="flex flex-col items-center h-full group relative">
                         
                         {/* Interactive Slider Track */}
                         <div className="relative flex-1 w-full flex justify-center py-4 group cursor-pointer">
@@ -198,10 +256,9 @@ export const Equalizer: React.FC<EqualizerProps> = ({
                                 value={band.gain}
                                 onChange={(e) => onBandChange(index, parseFloat(e.target.value))}
                                 className="absolute inset-0 h-full w-full appearance-none bg-transparent cursor-pointer z-10 opacity-0"
-                                style={{ 
-                                    WebkitAppearance: 'slider-vertical',
-                                    writingMode: 'bt-lr' 
-                                } as any} 
+                                {...{ orient: "vertical" }}
+                                aria-label={`${formatFreq(band.frequency)} Hz band gain`}
+                                aria-valuetext={`${band.gain} decibels`}
                              />
                              
                              <div 

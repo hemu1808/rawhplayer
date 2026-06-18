@@ -9,6 +9,15 @@ export const Visualizer: React.FC<VisualizerProps> = ({ isPlaying }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fftDataRef = useRef<number[]>(new Array(512).fill(0));
   const animationFrameRef = useRef<number>(0);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    setPrefersReducedMotion(mediaQuery.matches);
+    const handler = (e: MediaQueryListEvent) => setPrefersReducedMotion(e.matches);
+    mediaQuery.addEventListener('change', handler);
+    return () => mediaQuery.removeEventListener('change', handler);
+  }, []);
 
   // Optimization: Cache colors only once or when necessary, not every frame
   const colors = useMemo(() => {
@@ -92,7 +101,7 @@ export const Visualizer: React.FC<VisualizerProps> = ({ isPlaying }) => {
       animationFrameRef.current = requestAnimationFrame(draw);
     };
 
-    if (isPlaying) {
+    if (isPlaying && !prefersReducedMotion) {
         draw();
     } else {
         if(canvasRef.current) {
@@ -105,7 +114,7 @@ export const Visualizer: React.FC<VisualizerProps> = ({ isPlaying }) => {
     return () => {
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
     };
-  }, [isPlaying, colors]);
+  }, [isPlaying, colors, prefersReducedMotion]);
 
   // Handle High-DPI Scaling
   useEffect(() => {
@@ -135,7 +144,12 @@ export const Visualizer: React.FC<VisualizerProps> = ({ isPlaying }) => {
 
   return (
     <div className="w-full h-full relative">
-      <canvas ref={canvasRef} className="block w-full h-full" />
+      <canvas 
+        ref={canvasRef} 
+        role="img" 
+        aria-label="Audio Playback Visualizer Spectrogram" 
+        className="block w-full h-full" 
+      />
     </div>
   );
 };

@@ -1,5 +1,5 @@
 
-import React, { useRef, useState } from 'react';
+import React, { useState } from 'react';
 
 interface ScrollAreaProps {
   title: string;
@@ -10,7 +10,6 @@ interface ScrollAreaProps {
 }
 
 export const ScrollArea: React.FC<ScrollAreaProps> = ({ title, subtitle, children, action, onScrollChange }) => {
-  const scrollRef = useRef<HTMLDivElement>(null);
   const [isScrolled, setIsScrolled] = useState(false);
   const [scrollPos, setScrollPos] = useState(0);
 
@@ -36,13 +35,16 @@ export const ScrollArea: React.FC<ScrollAreaProps> = ({ title, subtitle, childre
       >
         <div className={`flex items-center justify-between w-full transition-opacity duration-300 ${isScrolled ? 'opacity-100' : 'opacity-0'}`}>
              <span className="font-bold text-base text-white tracking-tight">{title}</span>
-             {action && <div className="scale-90">{action}</div>}
+             {action && (
+                 <div className="scale-90" aria-hidden={!isScrolled}>
+                     {action}
+                 </div>
+             )}
         </div>
       </div>
 
       {/* Scroll Container */}
       <div 
-        ref={scrollRef}
         onScroll={handleScroll}
         className="h-full w-full overflow-y-auto overflow-x-hidden custom-scrollbar scroll-smooth perspective-1000"
       >
@@ -66,7 +68,11 @@ export const ScrollArea: React.FC<ScrollAreaProps> = ({ title, subtitle, childre
                         )}
                     </div>
                     {action && (
-                        <div className="mb-1 origin-right transition-opacity" style={{ opacity: titleOpacity }}>
+                        <div 
+                            className="mb-1 origin-right transition-opacity" 
+                            style={{ opacity: titleOpacity }}
+                            aria-hidden={scrollPos > 100}
+                        >
                             {action}
                         </div>
                     )}

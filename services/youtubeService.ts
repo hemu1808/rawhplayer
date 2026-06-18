@@ -2,14 +2,38 @@
 import { invoke } from '@tauri-apps/api/core';
 import { Track } from '../types';
 
+interface YouTubeItem {
+  id: { videoId: string };
+  snippet: {
+    title?: string;
+    channelTitle?: string;
+    thumbnails?: {
+      high?: { url: string };
+      default?: { url: string };
+    };
+  };
+}
+
+const isValidYouTubeItem = (item: any): item is YouTubeItem => {
+  return (
+    item &&
+    typeof item === 'object' &&
+    item.id &&
+    typeof item.id === 'object' &&
+    typeof item.id.videoId === 'string' &&
+    item.snippet &&
+    typeof item.snippet === 'object'
+  );
+};
+
 export const searchYouTube = async (query: string): Promise<Track[]> => {
   try {
     const data: any = await invoke('search_youtube', { query });
     
-    if (data && Array.isArray(data.items)) {
+    if (data && typeof data === 'object' && Array.isArray(data.items)) {
       return data.items
-        .filter((item: any) => item?.id?.videoId && item?.snippet)
-        .map((item: any) => ({
+        .filter(isValidYouTubeItem)
+        .map((item: YouTubeItem) => ({
           id: `yt-${item.id.videoId}`,
           file: new File([], "yt_stream"),
           name: item.snippet.title || "Unknown Title",

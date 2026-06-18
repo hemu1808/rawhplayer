@@ -3032,7 +3032,6 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-log",
- "thiserror 1.0.69",
 ]
 
 [[package]]

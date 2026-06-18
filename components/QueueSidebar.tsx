@@ -39,13 +39,27 @@ export const QueueSidebar: React.FC<QueueSidebarProps> = ({
                     <ListStart size={14} className="text-primary-500" /> Playing Next
                 </h2>
                 <div className="flex items-center gap-1">
-                    <button onClick={onShuffle} className="p-2 hover:bg-white/10 rounded-lg text-neutral-400 hover:text-white transition-colors" title="Shuffle">
+                    <button 
+                        onClick={onShuffle} 
+                        className="p-2 hover:bg-white/10 rounded-lg text-neutral-400 hover:text-white transition-colors" 
+                        title="Shuffle"
+                        aria-label="Shuffle queue"
+                    >
                         <Shuffle size={14} />
                     </button>
-                    <button onClick={onClear} className="p-2 hover:bg-red-500/10 rounded-lg text-neutral-400 hover:text-red-400 transition-colors" title="Clear Queue">
+                    <button 
+                        onClick={onClear} 
+                        className="p-2 hover:bg-red-500/10 rounded-lg text-neutral-400 hover:text-red-400 transition-colors" 
+                        title="Clear Queue"
+                        aria-label="Clear queue"
+                    >
                         <Trash2 size={14} />
                     </button>
-                    <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-lg text-neutral-400 hover:text-white transition-colors md:hidden">
+                    <button 
+                        onClick={onClose} 
+                        className="p-2 hover:bg-white/10 rounded-lg text-neutral-400 hover:text-white transition-colors md:hidden"
+                        aria-label="Close queue"
+                    >
                         <X size={14} />
                     </button>
                 </div>

@@ -1,14 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Track, AudioState, PlaybackMode, EqualizerBand, DEFAULT_EQ_BANDS, EQ_PRESETS } from './types';
+import { Track, AudioState, PlaybackMode, EqualizerBand, DEFAULT_EQ_BANDS, EQ_PRESETS, THEMES } from './types';
 import { Controls } from './components/Controls';
 import { Visualizer } from './components/Visualizer';
 import { Navigation } from './components/Navigation';
 import { TitleBar } from './components/TitleBar';
-import { FilesPage } from './pages/FilesPage';
-import { SettingsPage } from './pages/SettingsPage';
-import { ConnectPage } from './pages/ConnectPage';
-import { SearchPage } from './pages/SearchPage';
-import { AudiophilePage } from './pages/AudiophilePage'; 
 import { Equalizer } from './components/Equalizer';
 import { Toast } from './components/Toast';
 import { QueueDrawer } from './components/QueueDrawer';
@@ -18,27 +13,69 @@ import jsmediatags from 'jsmediatags/dist/jsmediatags.min.js';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
+// Lazy Loaded Page Components for Performance Code-Splitting
+const FilesPage = React.lazy(() => import('./pages/FilesPage').then(m => ({ default: m.FilesPage })));
+const SettingsPage = React.lazy(() => import('./pages/SettingsPage').then(m => ({ default: m.SettingsPage })));
+const ConnectPage = React.lazy(() => import('./pages/ConnectPage').then(m => ({ default: m.ConnectPage })));
+const SearchPage = React.lazy(() => import('./pages/SearchPage').then(m => ({ default: m.SearchPage })));
+const AudiophilePage = React.lazy(() => import('./pages/AudiophilePage').then(m => ({ default: m.AudiophilePage })));
+
 type Page = 'player' | 'files' | 'settings' | 'connect' | 'search' | 'audiophile';
 
 const App: React.FC = () => {
   const [activePage, setActivePage] = useState<Page>('player'); 
-  const [tracks, setTracks] = useState<Track[]>([]);
-  const [currentTrackIndex, setCurrentTrackIndex] = useState<number>(-1);
+  const [tracks, setTracks] = useState<Track[]>(() => {
+      try {
+          const saved = localStorage.getItem('rawh_tracks');
+          return saved ? JSON.parse(saved) : [];
+      } catch {
+          return [];
+      }
+  });
+  const [currentTrackIndex, setCurrentTrackIndex] = useState<number>(() => {
+      try {
+          const saved = localStorage.getItem('rawh_current_track_idx');
+          return saved ? parseInt(saved, 10) : -1;
+      } catch {
+          return -1;
+      }
+  });
   const [showEq, setShowEq] = useState(false);
   const [showQueue, setShowQueue] = useState(false);
   
   // Audio Engine State
-  const [audioState, setAudioState] = useState<AudioState>({
-    isPlaying: false,
-    currentTime: 0,
-    duration: 0,
-    volume: 1,
-    isMuted: false,
-    playbackRate: 1.0,
-    isPuristMode: true, 
-    sampleRate: 44100, 
-    bufferSize: 2048,
-    processingPrecision: '32-bit float'
+  const [audioState, setAudioState] = useState<AudioState>(() => {
+      let volume = 1.0;
+      let isMuted = false;
+      let isPuristMode = true;
+      let bufferSize = 2048;
+      let processingPrecision: '16-bit' | '32-bit float' = '32-bit float';
+      try {
+          const savedVol = localStorage.getItem('rawh_volume');
+          if (savedVol) volume = parseFloat(savedVol);
+          const savedMuted = localStorage.getItem('rawh_muted');
+          if (savedMuted) isMuted = savedMuted === 'true';
+          const savedPurist = localStorage.getItem('rawh_purist_mode');
+          if (savedPurist) isPuristMode = savedPurist === 'true';
+          const savedBufSize = localStorage.getItem('rawh_buffer_size');
+          if (savedBufSize) bufferSize = parseInt(savedBufSize, 10);
+          const savedPrecision = localStorage.getItem('rawh_precision');
+          if (savedPrecision === '16-bit' || savedPrecision === '32-bit float') {
+              processingPrecision = savedPrecision;
+          }
+      } catch {}
+      return {
+          isPlaying: false,
+          currentTime: 0,
+          duration: 0,
+          volume,
+          isMuted,
+          playbackRate: 1.0,
+          isPuristMode, 
+          sampleRate: 44100, 
+          bufferSize,
+          processingPrecision
+      };
   });
 
   const [playbackMode, setPlaybackMode] = useState<PlaybackMode>(PlaybackMode.SEQUENCE);
@@ -48,9 +85,28 @@ const App: React.FC = () => {
   const [toastMsg, setToastMsg] = useState("");
   const [mouseIdle, setMouseIdle] = useState(false);
   
-  const [eqBands, setEqBands] = useState<EqualizerBand[]>(DEFAULT_EQ_BANDS.map(b => ({ ...b })));
-  const [currentPresetId, setCurrentPresetId] = useState<string>('manual');
-  const [currentThemeId, setCurrentThemeId] = useState('reference');
+  const [eqBands, setEqBands] = useState<EqualizerBand[]>(() => {
+      try {
+          const saved = localStorage.getItem('rawh_eq_bands');
+          return saved ? JSON.parse(saved) : DEFAULT_EQ_BANDS.map(b => ({ ...b }));
+      } catch {
+          return DEFAULT_EQ_BANDS.map(b => ({ ...b }));
+      }
+  });
+  const [currentPresetId, setCurrentPresetId] = useState<string>(() => {
+      try {
+          return localStorage.getItem('rawh_eq_preset') || 'manual';
+      } catch {
+          return 'manual';
+      }
+  });
+  const [currentThemeId, setCurrentThemeId] = useState(() => {
+      try {
+          return localStorage.getItem('rawh_theme_id') || 'reference';
+      } catch {
+          return 'reference';
+      }
+  });
   
   const mouseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const currentTrack = tracks[currentTrackIndex];
@@ -68,20 +124,67 @@ const App: React.FC = () => {
   const playbackModeRef = useRef(playbackMode);
   playbackModeRef.current = playbackMode;
 
-  // --- MOUSE IDLE (Cinematic Feel) ---
+  // --- STATE PERSISTENCE SYNCHRONIZATION ---
   useEffect(() => {
-    const handleMove = () => {
+      try {
+          const serializable = tracks.map(t => {
+              const { file, ...rest } = t;
+              return rest;
+          });
+          localStorage.setItem('rawh_tracks', JSON.stringify(serializable));
+      } catch (e) {
+          console.error("Failed to save tracks to localStorage:", e);
+      }
+  }, [tracks]);
+
+  useEffect(() => {
+      localStorage.setItem('rawh_current_track_idx', String(currentTrackIndex));
+  }, [currentTrackIndex]);
+
+  useEffect(() => {
+      localStorage.setItem('rawh_volume', String(audioState.volume));
+      localStorage.setItem('rawh_muted', String(audioState.isMuted));
+      localStorage.setItem('rawh_purist_mode', String(audioState.isPuristMode));
+      localStorage.setItem('rawh_buffer_size', String(audioState.bufferSize));
+      localStorage.setItem('rawh_precision', audioState.processingPrecision);
+  }, [audioState.volume, audioState.isMuted, audioState.isPuristMode, audioState.bufferSize, audioState.processingPrecision]);
+
+  useEffect(() => {
+      localStorage.setItem('rawh_theme_id', currentThemeId);
+  }, [currentThemeId]);
+
+  useEffect(() => {
+      localStorage.setItem('rawh_eq_preset', currentPresetId);
+      localStorage.setItem('rawh_eq_bands', JSON.stringify(eqBands));
+  }, [currentPresetId, eqBands]);
+
+  // Apply persisted theme colors on launch and on theme change
+  useEffect(() => {
+      const theme = THEMES.find(t => t.id === currentThemeId) || THEMES.find(t => t.id === 'reference');
+      if (theme) {
+          document.documentElement.style.setProperty('--primary-500', theme.colors[500]);
+          document.documentElement.style.setProperty('--primary-900', theme.colors[900]);
+      }
+  }, [currentThemeId]);
+
+  // --- MOUSE & FOCUS IDLE (Cinematic Feel) ---
+  useEffect(() => {
+    const showControls = () => {
         setMouseIdle(false);
         if (mouseTimer.current) clearTimeout(mouseTimer.current);
         mouseTimer.current = setTimeout(() => {
-            if (audioState.isPlaying && !showQueue && !showEq && !isDragging) {
+            const hasFocusInControls = document.activeElement && 
+                document.querySelector('[role="contentinfo"]')?.contains(document.activeElement);
+            if (audioState.isPlaying && !showQueue && !showEq && !isDragging && !hasFocusInControls) {
                 setMouseIdle(true);
             }
         }, 4000);
     };
-    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mousemove', showControls);
+    window.addEventListener('focusin', showControls);
     return () => {
-        window.removeEventListener('mousemove', handleMove);
+        window.removeEventListener('mousemove', showControls);
+        window.removeEventListener('focusin', showControls);
         if (mouseTimer.current) clearTimeout(mouseTimer.current);
     };
   }, [audioState.isPlaying, showQueue, showEq, isDragging]);
@@ -416,7 +519,7 @@ const App: React.FC = () => {
                     {currentTrack && (
                         <div className="absolute inset-0 z-0 select-none pointer-events-none">
                             <div className="absolute inset-0 bg-black/50 z-10" />
-                            <img src={currentTrack.image} className="w-full h-full object-cover blur-[120px] opacity-40 scale-125" />
+                            <img src={currentTrack.image} alt="" role="presentation" className="w-full h-full object-cover blur-[120px] opacity-40 scale-125" />
                         </div>
                     )}
                     
@@ -428,7 +531,7 @@ const App: React.FC = () => {
                                 {/* Background Art Fade */}
                                 {currentTrack?.image && (
                                     <div className="absolute inset-0 z-0 opacity-20 group-hover:opacity-10 transition-opacity duration-1000">
-                                         <img src={currentTrack.image} className="w-full h-full object-cover" />
+                                         <img src={currentTrack.image} alt="" role="presentation" className="w-full h-full object-cover" />
                                     </div>
                                 )}
                                 
@@ -476,6 +579,7 @@ const App: React.FC = () => {
                                     onClick={generateInsight}
                                     className="absolute bottom-8 right-8 p-4 rounded-full bg-white/10 hover:bg-white/20 border border-white/10 backdrop-blur-md transition-all active:scale-95 group/ai"
                                     title="Generate Insight"
+                                    aria-label="Generate AI Track Insight"
                                 >
                                     <Sparkles size={24} className={isLoadingInsight ? 'animate-spin text-primary-500' : 'text-white'} />
                                 </button>
@@ -494,12 +598,17 @@ const App: React.FC = () => {
                                 onClick={() => { setShowEq(true); setAudioState(s => ({ ...s, isPuristMode: false })); }} 
                                 className={`w-14 h-14 rounded-2xl border flex items-center justify-center transition-all duration-300 shadow-xl ${!audioState.isPuristMode ? 'bg-primary-500 border-primary-400 text-black scale-110' : 'bg-black/40 border-white/10 backdrop-blur text-neutral-400 hover:text-white hover:bg-white/10'}`}
                                 title="Equalizer"
+                                aria-label="Open Equalizer"
+                                aria-expanded={showEq}
                             >
                                 <Sliders size={24} strokeWidth={1.5} />
                             </button>
-                             <button 
+                            <button 
+                                disabled
+                                aria-disabled="true"
                                 className={`w-14 h-14 rounded-2xl border flex items-center justify-center transition-all bg-black/40 border-white/10 backdrop-blur text-neutral-600 cursor-not-allowed`}
                                 title="Spatial Audio (Future)"
+                                aria-label="Spatial Audio (Future)"
                             >
                                 <Waves size={24} strokeWidth={1.5} />
                             </button>
@@ -519,7 +628,14 @@ const App: React.FC = () => {
           <Navigation activePage={activePage} onNavigate={setActivePage} />
           
           <main className="flex-1 relative z-10 flex flex-col min-w-0">
-              {renderContent()}
+              <React.Suspense fallback={
+                  <div className="h-full flex flex-col items-center justify-center bg-[#050505]">
+                      <div className="w-12 h-12 border-4 border-primary-500 border-t-transparent rounded-full animate-spin mb-4 shadow-glow" />
+                      <span className="text-sm font-mono text-neutral-400 uppercase tracking-widest animate-pulse">Loading Stage...</span>
+                  </div>
+              }>
+                  {renderContent()}
+              </React.Suspense>
           </main>
           
           <QueueDrawer 

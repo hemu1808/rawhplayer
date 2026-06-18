@@ -103,7 +103,8 @@ export const ConnectPage: React.FC<ConnectPageProps> = ({ onPlayUrl, onImportPla
                                     value={importUrl}
                                     onChange={(e) => setImportUrl(e.target.value)}
                                     placeholder="https://open.spotify.com/playlist/..." 
-                                    className="w-full bg-black/40 border border-white/10 rounded-xl py-4 pl-11 pr-4 text-white text-sm focus:border-green-500/50 outline-none transition-all placeholder:text-neutral-600"
+                                    aria-label="Universal Playlist URL"
+                                    className="w-full bg-black/40 border border-white/10 rounded-xl py-4 pl-11 pr-4 text-white text-sm focus:border-green-500/50 outline-none transition-all placeholder:text-neutral-600 focus:ring-1 focus:ring-green-500/50"
                                     disabled={isImporting}
                                 />
                              </div>
@@ -155,7 +156,8 @@ export const ConnectPage: React.FC<ConnectPageProps> = ({ onPlayUrl, onImportPla
                         value={streamUrl}
                         onChange={(e) => setStreamUrl(e.target.value)}
                         placeholder="Direct Audio URL (FLAC/MP3/WAV)..." 
-                        className="flex-1 bg-black/40 border border-white/10 rounded-xl px-6 py-4 text-white text-sm focus:border-amber-500/50 outline-none transition-colors placeholder:text-neutral-600"
+                        aria-label="Direct Audio Stream URL"
+                        className="flex-1 bg-black/40 border border-white/10 rounded-xl px-6 py-4 text-white text-sm focus:border-amber-500/50 outline-none transition-colors placeholder:text-neutral-600 focus:ring-1 focus:ring-amber-500/50"
                     />
                     <button 
                         onClick={handleStreamLoad}
@@ -184,8 +186,12 @@ export const ConnectPage: React.FC<ConnectPageProps> = ({ onPlayUrl, onImportPla
                         <div>
                             <h4 className="text-xl font-medium text-white mb-1">{source.name}</h4>
                             <p className="text-xs text-neutral-500 mb-6">Access your library remotely.</p>
-                            <button className="w-full py-3 text-xs font-bold uppercase tracking-wider bg-white/5 hover:bg-white/10 border border-white/5 rounded-xl text-white transition-colors">
-                                {source.status}
+                            <button 
+                                disabled 
+                                aria-disabled="true" 
+                                className="w-full py-3 text-xs font-bold uppercase tracking-wider bg-white/5 border border-white/5 rounded-xl text-neutral-500 cursor-not-allowed"
+                            >
+                                {source.status} (Unavailable)
                             </button>
                         </div>
                     </div>

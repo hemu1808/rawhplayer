@@ -39,7 +39,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     // Sync Volume/Mute
     useEffect(() => {
         if (videoRef.current) {
-            videoRef.current.volume = volume;
+            videoRef.current.volume = Math.max(0, Math.min(1, volume));
             videoRef.current.muted = isMuted;
         }
     }, [volume, isMuted]);
@@ -63,6 +63,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             <video
                 ref={videoRef}
                 src={src}
+                aria-label="Video playback monitor"
                 className="w-full h-full object-contain max-h-screen"
                 onTimeUpdate={(e) => onTimeUpdate(e.currentTarget.currentTime, e.currentTarget.duration)}
                 onEnded={onEnded}

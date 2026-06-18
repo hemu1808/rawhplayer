@@ -16,7 +16,6 @@ interface ControlsProps {
   onToggleMode: () => void;
   onToggleLike: () => void;
   onSpeedChange: (speed: number) => void;
-  customThumbnailGradient?: string | null;
   showQueue?: boolean;
   onToggleQueue?: () => void;
   isExpanded?: boolean;
@@ -43,7 +42,6 @@ export const Controls: React.FC<ControlsProps> = ({
   onToggleMode,
   onToggleLike,
   onSpeedChange,
-  customThumbnailGradient,
   showQueue,
   onToggleQueue,
   isExpanded,
@@ -53,22 +51,23 @@ export const Controls: React.FC<ControlsProps> = ({
     const [isHoveringTime, setIsHoveringTime] = useState(false);
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 h-20 bg-neutral-950/80 border-t border-white/5 backdrop-blur-2xl px-6 md:px-8 flex items-center justify-between z-[80] text-white transition-all duration-300">
+    <footer role="contentinfo" className="fixed bottom-0 left-0 right-0 h-20 bg-neutral-950/80 border-t border-white/5 backdrop-blur-2xl px-6 md:px-8 flex items-center justify-between z-[80] text-white transition-all duration-300">
       
       {/* Left: Track Info */}
       <div className="flex items-center w-[30%] min-w-[240px] gap-4">
         {currentTrack ? (
              <div className="flex items-center gap-4 overflow-hidden group">
-                 <div 
-                    className="w-12 h-12 bg-neutral-900 rounded-md flex items-center justify-center shrink-0 border border-white/10 relative overflow-hidden cursor-pointer"
+                 <button 
+                    className="w-12 h-12 bg-neutral-900 rounded-md flex items-center justify-center shrink-0 border border-white/10 relative overflow-hidden cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary-500"
                     onClick={onToggleExpand}
+                    aria-label="Expand artwork view"
                  >
                     {currentTrack.image ? (
-                        <img src={currentTrack.image} alt="Art" className="w-full h-full object-cover" />
+                        <img src={currentTrack.image} alt={`${currentTrack.name} album art`} className="w-full h-full object-cover" />
                     ) : (
                         <div className="text-[10px] font-bold text-neutral-500">{currentTrack.format || 'FILE'}</div>
                     )}
-                 </div>
+                 </button>
                  <div className="flex flex-col overflow-hidden justify-center">
                      <span className="text-sm font-medium truncate text-white/90 cursor-default">{currentTrack.name}</span>
                      <span className="text-xs text-neutral-500 truncate font-light">{currentTrack.artist}</span>
@@ -82,18 +81,27 @@ export const Controls: React.FC<ControlsProps> = ({
       {/* Center: Controls */}
       <div className="flex flex-col items-center justify-center w-[40%] max-w-2xl z-20">
           <div className="flex items-center gap-6 mb-2">
-            <button onClick={onPrev} className="text-neutral-400 hover:text-white transition-all hover:scale-105 active:scale-95">
+            <button 
+                onClick={onPrev} 
+                className="text-neutral-400 hover:text-white transition-all hover:scale-105 active:scale-95"
+                aria-label="Previous track"
+            >
                 <SkipBack size={18} fill="currentColor" />
             </button>
             
             <button 
                 onClick={onPlayPause}
                 className="w-10 h-10 flex items-center justify-center rounded-full bg-white text-black hover:scale-105 active:scale-95 transition-all shadow-[0_0_15px_rgba(255,255,255,0.1)]"
+                aria-label={state.isPlaying ? "Pause" : "Play"}
             >
-                {state.isPlaying ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" className="ml-0.5" />}
+                {state.isPlaying ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" className="ml-0.5" />}
             </button>
 
-            <button onClick={onNext} className="text-neutral-400 hover:text-white transition-all hover:scale-105 active:scale-95">
+            <button 
+                onClick={onNext} 
+                className="text-neutral-400 hover:text-white transition-all hover:scale-105 active:scale-95"
+                aria-label="Next track"
+            >
                 <SkipForward size={18} fill="currentColor" />
             </button>
           </div>
@@ -103,7 +111,7 @@ export const Controls: React.FC<ControlsProps> = ({
               <div className="flex-1 h-1 bg-white/10 rounded-full relative cursor-pointer group/bar">
                   <div 
                     className="absolute inset-y-0 left-0 bg-primary-500 rounded-full transition-all duration-75"
-                    style={{ width: `${(state.currentTime / (state.duration || 1)) * 100}%` }}
+                    style={{ width: `${state.duration > 0 ? (state.currentTime / state.duration) * 100 : 0}%` }}
                   />
                   <input
                     type="range"
@@ -112,6 +120,8 @@ export const Controls: React.FC<ControlsProps> = ({
                     value={state.currentTime}
                     onChange={(e) => onSeek(Number(e.target.value))}
                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    aria-label="Playback position"
+                    aria-valuetext={`${formatTime(state.currentTime)} of ${formatTime(state.duration)}`}
                   />
               </div>
               <span className="w-10">{formatTime(state.duration)}</span>
@@ -120,7 +130,11 @@ export const Controls: React.FC<ControlsProps> = ({
 
       {/* Right: Volume & Tools */}
       <div className="flex items-center justify-end w-[30%] min-w-[240px] gap-3">
-          <button onClick={onToggleMute} className="text-neutral-500 hover:text-white">
+          <button 
+            onClick={onToggleMute} 
+            className="text-neutral-500 hover:text-white"
+            aria-label={state.isMuted ? "Unmute" : "Mute"}
+          >
               {state.isMuted || state.volume === 0 ? <VolumeX size={16} /> : <Volume2 size={16} />}
           </button>
           <div className="w-20 h-1 bg-white/10 rounded-full relative group cursor-pointer hidden xl:block">
@@ -136,19 +150,23 @@ export const Controls: React.FC<ControlsProps> = ({
                 value={state.isMuted ? 0 : state.volume}
                 onChange={(e) => onVolumeChange(Number(e.target.value))}
                 className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                aria-label="Volume level"
+                aria-valuetext={`${Math.round((state.isMuted ? 0 : state.volume) * 100)}%`}
               />
           </div>
           
           <div className="h-4 w-px bg-white/10 mx-2" />
 
           <button 
-            onClick={onToggleQueue}
+            onClick={() => onToggleQueue?.()}
             className={`transition-colors p-2 rounded-lg ${showQueue ? 'text-primary-500 bg-white/5' : 'text-neutral-500 hover:text-white'}`}
             title="Queue"
+            aria-label="Queue"
+            aria-expanded={showQueue}
           >
             <ListMusic size={18} />
           </button>
       </div>
-    </div>
+    </footer>
   );
 };

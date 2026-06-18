@@ -23,6 +23,26 @@ fn set_volume(volume: f32, engine: State<'_, AudioEngine>) -> Result<(), String>
     engine.set_volume(volume)
 }
 
+#[derive(serde::Deserialize)]
+struct GeminiPart {
+    text: String,
+}
+
+#[derive(serde::Deserialize)]
+struct GeminiContent {
+    parts: Vec<GeminiPart>,
+}
+
+#[derive(serde::Deserialize)]
+struct GeminiCandidate {
+    content: GeminiContent,
+}
+
+#[derive(serde::Deserialize)]
+struct GeminiResponse {
+    candidates: Vec<GeminiCandidate>,
+}
+
 #[tauri::command]
 async fn get_track_insight(artist: String, title: String) -> Result<String, String> {
     let api_key = std::env::var("GEMINI_API_KEY")
@@ -55,11 +75,12 @@ async fn get_track_insight(artist: String, title: String) -> Result<String, Stri
         return Err(format!("Gemini API returned error: {}", err_text));
     }
 
-    let res_json: serde_json::Value = response.json().await
+    let res_json: GeminiResponse = response.json().await
         .map_err(|e| format!("Failed to parse response: {}", e))?;
 
-    let text = res_json["candidates"][0]["content"]["parts"][0]["text"]
-        .as_str()
+    let text = res_json.candidates.first()
+        .and_then(|c| c.content.parts.first())
+        .map(|p| &p.text)
         .ok_or_else(|| "Invalid response format from Gemini".to_string())?;
 
     Ok(text.trim().to_string())

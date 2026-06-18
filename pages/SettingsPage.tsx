@@ -1,6 +1,6 @@
 import React from 'react';
 import { Shield, Volume2, Palette, ToggleRight, ToggleLeft } from 'lucide-react';
-import { ThemeColor } from '../types';
+import { ThemeColor, THEMES } from '../types';
 import { ScrollArea } from '../components/ScrollArea';
 
 interface SettingsPageProps {
@@ -13,15 +13,6 @@ interface SettingsPageProps {
     onTogglePrecision?: () => void;
     onBufferSizeChange?: (size: number) => void;
 }
-
-const THEMES: ThemeColor[] = [
-    { name: 'Immersive Glass', id: 'immersive', colors: { 300: '#ffffff', 400: '#e5e5e5', 500: '#ffffff', 600: '#a3a3a3', 900: '#262626' } },
-    { name: 'Rawh Gold', id: 'gold', colors: { 300: '#fcd34d', 400: '#fbbf24', 500: '#f59e0b', 600: '#d97706', 900: '#78350f' } },
-    { name: 'Reference', id: 'reference', colors: { 300: '#d4d4d4', 400: '#a3a3a3', 500: '#737373', 600: '#525252', 900: '#171717' } },
-    { name: 'Analog Warm', id: 'analog', colors: { 300: '#fdba74', 400: '#fb923c', 500: '#f97316', 600: '#ea580c', 900: '#431407' } },
-    { name: 'Cyber Blue', id: 'cyber', colors: { 300: '#67e8f9', 400: '#22d3ee', 500: '#06b6d4', 600: '#0891b2', 900: '#164e63' } },
-    { name: 'Forest Studio', id: 'forest', colors: { 300: '#86efac', 400: '#4ade80', 500: '#22c55e', 600: '#16a34a', 900: '#14532d' } },
-];
 
 export const SettingsPage: React.FC<SettingsPageProps> = ({ 
     currentThemeId, 
@@ -45,8 +36,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 </div>
                 <h3 className="text-sm font-bold text-white uppercase tracking-widest">Look & Feel</h3>
             </div>
-            <div className="glass-panel rounded-3xl p-6 md:p-8">
-                <div className="text-white font-medium mb-6 text-base">Theme Engine</div>
+            <fieldset className="glass-panel rounded-3xl p-6 md:p-8 border-transparent">
+                <legend className="text-white font-medium mb-6 text-base px-1">Theme Engine</legend>
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
                     {THEMES.map(theme => (
                         <button 
@@ -80,7 +71,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                         </button>
                     ))}
                 </div>
-            </div>
+            </fieldset>
         </section>
 
         {/* Audio Section */}
@@ -91,18 +82,21 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 </div>
                 <h3 className="text-sm font-bold text-white uppercase tracking-widest">Audio Engine</h3>
             </div>
-            <div className="glass-panel rounded-3xl p-0 overflow-hidden">
+            <fieldset className="glass-panel rounded-3xl p-0 overflow-hidden border-transparent">
+                <legend className="sr-only">Audio Engine Configuration</legend>
                 <div className="p-6 flex items-center justify-between border-b border-white/5 hover:bg-white/5 transition-colors">
                     <div>
-                        <div className="text-white text-base font-medium mb-1 flex items-center gap-2">
+                        <label htmlFor="audio-purist-switch" className="text-white text-base font-medium mb-1 flex items-center gap-2 cursor-pointer">
                              Audio Purist Mode <span className="px-1.5 py-0.5 rounded bg-primary-500 text-black text-[9px] font-bold">BIT PERFECT</span>
-                        </div>
+                        </label>
                         <div className="text-xs text-neutral-500">Bypasses EQ and DSP for transparent signal path.</div>
                     </div>
                     <button 
+                        id="audio-purist-switch"
                         onClick={onTogglePurist} 
-                        aria-label="Toggle Audio Purist Mode"
-                        aria-pressed={isPuristMode}
+                        role="switch"
+                        aria-checked={isPuristMode}
+                        aria-label="Audio Purist Mode"
                         className={`transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500/50 rounded-lg ${isPuristMode ? 'text-primary-500' : 'text-neutral-600'}`}
                     >
                         {isPuristMode ? <ToggleRight size={32} /> : <ToggleLeft size={32} />}
@@ -111,13 +105,15 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 
                 <div className="p-6 flex items-center justify-between border-b border-white/5 hover:bg-white/5 transition-colors">
                     <div>
-                        <div className="text-white text-base font-medium mb-1">32-Bit Floating Point</div>
+                        <label htmlFor="dsp-precision-switch" className="text-white text-base font-medium mb-1 cursor-pointer">32-Bit Floating Point</label>
                         <div className="text-xs text-neutral-500">Internal DSP precision resolution.</div>
                     </div>
                     <button 
+                        id="dsp-precision-switch"
                         onClick={onTogglePrecision} 
-                        aria-label="Toggle 32-Bit Floating Point Precision"
-                        aria-pressed={processingPrecision === '32-bit float'}
+                        role="switch"
+                        aria-checked={processingPrecision === '32-bit float'}
+                        aria-label="32-Bit Floating Point Precision"
                         className={`transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500/50 rounded-lg ${processingPrecision === '32-bit float' ? 'text-primary-500' : 'text-neutral-600'}`}
                     >
                         {processingPrecision === '32-bit float' ? <ToggleRight size={32} /> : <ToggleLeft size={32} />}
@@ -126,21 +122,21 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
                 <div className="p-6 flex items-center justify-between hover:bg-white/5 transition-colors">
                     <div>
-                        <div className="text-white text-base font-medium mb-1">Buffer Size</div>
+                        <label htmlFor="buffer-size-select" className="text-white text-base font-medium mb-1 cursor-pointer">Buffer Size</label>
                         <div className="text-xs text-neutral-500">Lower latency vs stability.</div>
                     </div>
                     <select 
+                        id="buffer-size-select"
                         value={bufferSize}
                         onChange={(e) => onBufferSizeChange?.(Number(e.target.value))}
-                        aria-label="Select Audio Buffer Size"
-                        className="bg-black/50 border border-white/10 text-xs text-white rounded-lg px-3 py-2 outline-none focus:border-primary-500 transition-colors"
+                        className="bg-black/50 border border-white/10 text-xs text-white rounded-lg px-3 py-2 outline-none focus:border-primary-500 transition-colors focus:ring-1 focus:ring-primary-500/50"
                     >
                         <option value={512}>512 samples (Low Latency)</option>
                         <option value={1024}>1024 samples (Balanced)</option>
                         <option value={2048}>2048 samples (Stable)</option>
                     </select>
                 </div>
-            </div>
+            </fieldset>
         </section>
 
         {/* API Section */}
@@ -151,15 +147,16 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 </div>
                 <h3 className="text-sm font-bold text-white uppercase tracking-widest">API Configuration</h3>
             </div>
-            <div className="glass-panel rounded-3xl p-6">
+            <fieldset className="glass-panel rounded-3xl p-6 border-transparent">
+                <legend className="sr-only">API Configuration Settings</legend>
                 <div className="mb-1">
-                    <label className="block text-xs text-neutral-400 mb-2 uppercase tracking-wider font-bold">Gemini API Key</label>
+                    <label htmlFor="gemini-api-key" className="block text-xs text-neutral-400 mb-2 uppercase tracking-wider font-bold cursor-pointer">Gemini API Key</label>
                     <div className="relative">
                          <input 
+                            id="gemini-api-key"
                             type="text" 
                             value="••••••••••••••••••••••••" 
                             disabled
-                            aria-label="Gemini API Key Status"
                             className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-neutral-400 font-mono text-sm tracking-widest"
                         />
                         <div className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-primary-500 bg-primary-500/10 px-2 py-1 rounded border border-primary-500/20">
@@ -167,7 +164,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                         </div>
                     </div>
                 </div>
-            </div>
+            </fieldset>
         </section>
 
       </div>

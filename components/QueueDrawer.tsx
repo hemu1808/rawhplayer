@@ -22,16 +22,25 @@ export const QueueItem: React.FC<{
     onRemove: () => void; 
 }> = ({ track, isActive, isHistory, onClick, onRemove }) => (
     <div 
+        role="button"
+        tabIndex={0}
+        aria-label={`${isHistory ? 'History: ' : isActive ? 'Now Playing: ' : ''}Play ${track.name} by ${track.artist}`}
+        onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onClick();
+            }
+        }}
         className={`group flex items-center gap-3 p-2.5 rounded-xl cursor-pointer transition-all border ${
             isActive 
             ? 'bg-white/10 border-white/10 shadow-lg' 
             : 'border-transparent hover:bg-white/5 hover:border-white/5'
-        } ${isHistory ? 'opacity-50 grayscale hover:grayscale-0 hover:opacity-100' : ''}`}
+        } ${isHistory ? 'opacity-50 grayscale hover:grayscale-0 hover:opacity-100' : ''} focus:outline-none focus:ring-1 focus:ring-primary-500`}
         onClick={onClick}
     >
         <div className="relative w-10 h-10 rounded-lg bg-neutral-900 overflow-hidden shrink-0 border border-white/10">
             {track.image ? (
-                <img src={track.image} className="w-full h-full object-cover" />
+                <img src={track.image} alt={`${track.name} album art`} className="w-full h-full object-cover" />
             ) : (
                 <div className="w-full h-full flex items-center justify-center bg-white/5">
                     <AudioWaveform size={14} className="text-neutral-500" />
@@ -108,13 +117,27 @@ export const QueueDrawer: React.FC<QueueDrawerProps> = ({
                     </div>
                 </div>
                 <div className="flex items-center gap-1">
-                    <button onClick={onShuffle} className="p-2 hover:bg-white/10 rounded-lg text-neutral-400 hover:text-white transition-colors" title="Shuffle">
+                    <button 
+                        onClick={onShuffle} 
+                        className="p-2 hover:bg-white/10 rounded-lg text-neutral-400 hover:text-white transition-colors" 
+                        title="Shuffle"
+                        aria-label="Shuffle queue"
+                    >
                         <Shuffle size={16} />
                     </button>
-                    <button onClick={onClear} className="p-2 hover:bg-red-500/10 rounded-lg text-neutral-400 hover:text-red-400 transition-colors" title="Clear Queue">
+                    <button 
+                        onClick={onClear} 
+                        className="p-2 hover:bg-red-500/10 rounded-lg text-neutral-400 hover:text-red-400 transition-colors" 
+                        title="Clear Queue"
+                        aria-label="Clear queue"
+                    >
                         <Trash2 size={16} />
                     </button>
-                    <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-lg text-neutral-400 hover:text-white transition-colors ml-2">
+                    <button 
+                        onClick={onClose} 
+                        className="p-2 hover:bg-white/10 rounded-lg text-neutral-400 hover:text-white transition-colors ml-2"
+                        aria-label="Close queue"
+                    >
                         <X size={18} />
                     </button>
                 </div>
