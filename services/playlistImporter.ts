@@ -52,11 +52,17 @@ export const importFromUrl = async (url: string): Promise<ImportResult> => {
 
     if ((match = url.match(PATTERNS.SPOTIFY))) {
         provider = 'spotify';
-        type = match[1] as any;
+        const matchedType = match[1];
+        if (matchedType === 'playlist' || matchedType === 'track' || matchedType === 'album') {
+            type = matchedType;
+        }
         id = match[2];
     } else if ((match = url.match(PATTERNS.APPLE))) {
         provider = 'apple';
-        type = match[1] as any;
+        const matchedType = match[1];
+        if (matchedType === 'playlist' || matchedType === 'album') {
+            type = matchedType;
+        }
         id = match[2];
     } else if ((match = url.match(PATTERNS.YOUTUBE))) {
         provider = 'youtube';
@@ -73,24 +79,25 @@ export const importFromUrl = async (url: string): Promise<ImportResult> => {
     // 1. Get the list of song titles (Mocked for this client-only demo)
     const rawTitles = await fetchExternalMetadata(provider, id);
 
-    // 2. Convert titles to Playable Tracks via YouTube Search Service
-    const tracks: Track[] = [];
-    
-    // We process sequentially to avoid rate limiting logic in a real app
-    for (const title of rawTitles) {
+    // 2. Convert titles to Playable Tracks concurrently via YouTube Search Service
+    const searchPromises = rawTitles.map(async (title): Promise<Track | null> => {
         try {
-            // We search for the best match
             const results = await searchYouTube(title);
-            if (results.length > 0) {
-                // Add a tag to know it came from an import
-                const track = results[0];
-                track.album = `${provider === 'spotify' ? 'Spotify' : provider === 'apple' ? 'Apple Music' : 'YouTube'} Import`;
-                tracks.push(track);
+            if (results && results.length > 0) {
+                // Return a clean copy instead of mutating cached objects directly
+                return {
+                    ...results[0],
+                    album: `${provider === 'spotify' ? 'Spotify' : provider === 'apple' ? 'Apple Music' : 'YouTube'} Import`
+                };
             }
         } catch (e) {
-            console.warn(`Failed to resolve track: ${title}`);
+            console.warn(`Failed to resolve track: ${title}`, e);
         }
-    }
+        return null;
+    });
+
+    const resolvedResults = await Promise.all(searchPromises);
+    const tracks = resolvedResults.filter((t): t is Track => t !== null);
 
     let collectionName = 'Imported Collection';
     if (provider === 'spotify') collectionName = 'Spotify Collection';

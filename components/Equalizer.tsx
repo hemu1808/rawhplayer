@@ -29,12 +29,30 @@ export const Equalizer: React.FC<EqualizerProps> = ({
 
   useEffect(() => {
     if (!isOpen) return;
-    const unlisten = listen<{ fft: number[] }>('fft_data', (event) => {
-      fftDataRef.current = event.payload.fft;
-    });
+    
+    let active = true;
+    let unlistenFn: (() => void) | null = null;
+    
+    const setupListener = async () => {
+      const u = await listen<{ fft: number[] }>('fft_data', (event) => {
+        if (active) {
+          fftDataRef.current = event.payload.fft;
+        }
+      });
+      if (active) {
+        unlistenFn = u;
+      } else {
+        u();
+      }
+    };
+    
+    setupListener();
 
     return () => {
-      unlisten.then(f => f());
+      active = false;
+      if (unlistenFn) {
+        unlistenFn();
+      }
     };
   }, [isOpen]);
 

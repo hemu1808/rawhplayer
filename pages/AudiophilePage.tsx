@@ -20,31 +20,59 @@ export const AudiophilePage: React.FC<AudiophilePageProps> = ({ sampleRate }) =>
   const fftDataRef = useRef<{ fft: number[], waveform: number[] }>({ fft: [], waveform: [] });
 
   useEffect(() => {
-    const unlisten = listen<{ fft: number[], waveform: number[] }>('fft_data', (event) => {
-      fftDataRef.current = event.payload;
-    });
-    return () => { unlisten.then(f => f()); };
+    let active = true;
+    let unlistenFn: (() => void) | null = null;
+    
+    const setupListener = async () => {
+      const u = await listen<{ fft: number[], waveform: number[] }>('fft_data', (event) => {
+        if (active) {
+          fftDataRef.current = event.payload;
+        }
+      });
+      if (active) {
+        unlistenFn = u;
+      } else {
+        u();
+      }
+    };
+    
+    setupListener();
+
+    return () => {
+      active = false;
+      if (unlistenFn) {
+        unlistenFn();
+      }
+    };
   }, []);
 
   useEffect(() => {
-    if (!canvasRef.current || !scopeRef.current || !goniometerRef.current) return;
-
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    const scopeCanvas = scopeRef.current;
-    const scopeCtx = scopeCanvas.getContext('2d');
-    const gonioCanvas = goniometerRef.current;
-    const gonioCtx = gonioCanvas.getContext('2d');
-    
-    if (!ctx || !scopeCtx || !gonioCtx) return;
-
-    // Create an offscreen canvas to shift the spectrogram
+    // Create offscreen canvas for spectrogram shifting
     const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = canvas.width;
-    tempCanvas.height = canvas.height;
+    tempCanvas.width = 1000;
+    tempCanvas.height = 340;
     const tempCtx = tempCanvas.getContext('2d');
 
     const draw = () => {
+        const canvas = canvasRef.current;
+        const scopeCanvas = scopeRef.current;
+        const gonioCanvas = goniometerRef.current;
+        
+        // Safety check inside loop to handle cases where canvas refs aren't mounted on frame 1 (H-4 Fix)
+        if (!canvas || !scopeCanvas || !gonioCanvas) {
+            rafRef.current = requestAnimationFrame(draw);
+            return;
+        }
+
+        const ctx = canvas.getContext('2d');
+        const scopeCtx = scopeCanvas.getContext('2d');
+        const gonioCtx = gonioCanvas.getContext('2d');
+        
+        if (!ctx || !scopeCtx || !gonioCtx) {
+            rafRef.current = requestAnimationFrame(draw);
+            return;
+        }
+
         const { fft, waveform } = fftDataRef.current;
         const bufferLength = fft.length;
         if (bufferLength === 0) {
@@ -52,44 +80,64 @@ export const AudiophilePage: React.FC<AudiophilePageProps> = ({ sampleRate }) =>
             return;
         }
 
-        // --- CALC PEAKS (Simulated Stereo split) ---
-        let sum = 0;
-        for(let i=0; i<waveform.length; i++) {
-             sum += waveform[i] * waveform[i];
+        // --- REAL STEREO PEAKS EXTRACTION (H-17, H-18, H-19) ---
+        let sumL = 0;
+        let sumR = 0;
+        let count = 0;
+        
+        // Extract L and R channels from interleaved data
+        if (waveform.length >= 2) {
+            for (let i = 0; i < waveform.length - 1; i += 2) {
+                const l = waveform[i];
+                const r = waveform[i + 1] !== undefined ? waveform[i + 1] : l;
+                sumL += l * l;
+                sumR += r * r;
+                count++;
+            }
+        } else {
+            // Fallback for empty or invalid waveform
+            for (let i = 0; i < waveform.length; i++) {
+                sumL += waveform[i] * waveform[i];
+            }
+            sumR = sumL;
+            count = waveform.length;
         }
-        const rms = Math.sqrt(sum / waveform.length) || 0.0000001;
-        const db = 20 * Math.log10(rms); 
         
-        const leftDb = Math.max(-60, db);
-        const rightDb = Math.max(-60, db - (Math.random()*2));
+        const rmsL = count > 0 ? Math.sqrt(sumL / count) : 0.0000001;
+        const rmsR = count > 0 ? Math.sqrt(sumR / count) : 0.0000001;
         
-        // Direct DOM updates instead of setState (H-7 Fix)
+        const dbL = 20 * Math.log10(rmsL || 0.0000001);
+        const dbR = 20 * Math.log10(rmsR || 0.0000001);
+        
+        const leftDb = Math.max(-60, dbL);
+        const rightDb = Math.max(-60, dbR);
+        
         const leftHeight = ((leftDb + 60) / 60) * 100;
         const rightHeight = ((rightDb + 60) / 60) * 100;
         
         if (leftMeterRef.current) {
             leftMeterRef.current.style.height = `${leftHeight}%`;
-            leftMeterRef.current.className = `absolute bottom-0 w-full transition-all duration-75 ${leftDb > -3 ? 'bg-red-500' : leftDb > -12 ? 'bg-yellow-500' : 'bg-green-500'}`;
+            leftMeterRef.current.className = `absolute bottom-0 w-full transition-all duration-75 ${leftDb > -3 ? 'bg-red-500 animate-[pulse_0.2s_infinite]' : leftDb > -12 ? 'bg-yellow-500' : 'bg-green-500'}`;
         }
         if (rightMeterRef.current) {
             rightMeterRef.current.style.height = `${rightHeight}%`;
-            rightMeterRef.current.className = `absolute bottom-0 w-full transition-all duration-75 ${rightDb > -3 ? 'bg-red-500' : rightDb > -12 ? 'bg-yellow-500' : 'bg-green-500'}`;
+            rightMeterRef.current.className = `absolute bottom-0 w-full transition-all duration-75 ${rightDb > -3 ? 'bg-red-500 animate-[pulse_0.2s_infinite]' : rightDb > -12 ? 'bg-yellow-500' : 'bg-green-500'}`;
         }
         if (peakLevelTextRef.current) {
-            peakLevelTextRef.current.textContent = leftDb.toFixed(1);
+            peakLevelTextRef.current.textContent = Math.max(leftDb, rightDb).toFixed(1);
         }
 
         // --- SPECTROGRAM ---
         if (tempCtx) {
             tempCtx.drawImage(canvas, 0, 0, canvas.width, canvas.height);
-            ctx.clearRect(0,0, canvas.width, canvas.height);
-            ctx.drawImage(tempCanvas, -1, 0); // Slower shift for better res
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(tempCanvas, -1, 0); // shift left by 1 pixel
 
-            for(let i = 0; i < bufferLength; i += 2) { 
-                const value = Math.min((fft[i] || 0) / 100, 1.0); // normalize roughly
-                if (value > 0.05) { // Threshold to reduce noise
+            for (let i = 0; i < bufferLength; i += 2) { 
+                const value = Math.min((fft[i] || 0) / 100, 1.0);
+                if (value > 0.05) {
                     const y = canvas.height - (i / bufferLength) * canvas.height;
-                    const hueVal = 260 - (value * 260); // Blue to Red heatmap
+                    const hueVal = 260 - (value * 260); // Blue (cold) to Red (hot)
                     const lightness = value * 60;
                     ctx.fillStyle = `hsla(${hueVal}, 100%, ${lightness}%, 1)`;
                     ctx.fillRect(canvas.width - 1, y, 1, 2);
@@ -112,7 +160,7 @@ export const AudiophilePage: React.FC<AudiophilePageProps> = ({ sampleRate }) =>
         }
         scopeCtx.stroke();
 
-        // --- GONIOMETER ---
+        // --- REAL PHASE CORRELATION GONIOMETER (Lissajous plot L vs R) ---
         gonioCtx.fillStyle = 'rgba(0, 0, 0, 0.25)'; 
         gonioCtx.fillRect(0, 0, gonioCanvas.width, gonioCanvas.height);
         const center = gonioCanvas.width / 2;
@@ -120,13 +168,18 @@ export const AudiophilePage: React.FC<AudiophilePageProps> = ({ sampleRate }) =>
         gonioCtx.strokeStyle = 'rgba(96, 165, 250, 0.8)';
         gonioCtx.beginPath();
         
-        for (let i = 0; i < waveform.length; i+=4) {
-             const L = waveform[i];
-             const R = waveform[(i + 16) % waveform.length] || 0; // Phase offset
-             const valX = (L - R) * 0.707 * (center * 0.8);
-             const valY = (L + R) * 0.707 * (center * 0.8);
-             if (i===0) gonioCtx.moveTo(center + valX, center - valY);
-             else gonioCtx.lineTo(center + valX, center - valY);
+        if (waveform.length >= 2) {
+            for (let i = 0; i < waveform.length - 1; i += 4) {
+                 const L = waveform[i];
+                 const R = waveform[i + 1] !== undefined ? waveform[i + 1] : L;
+                 
+                 // Rotate 45 degrees to match standard stereo correlation plot
+                 const valX = (L - R) * 0.707 * (center * 0.8);
+                 const valY = (L + R) * 0.707 * (center * 0.8);
+                 
+                 if (i === 0) gonioCtx.moveTo(center + valX, center - valY);
+                 else gonioCtx.lineTo(center + valX, center - valY);
+            }
         }
         gonioCtx.stroke();
         

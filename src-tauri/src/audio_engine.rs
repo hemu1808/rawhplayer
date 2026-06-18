@@ -11,9 +11,14 @@ use std::thread;
 use std::sync::atomic::{AtomicBool, Ordering};
 use log::{info, error, warn};
 
+#[allow(dead_code)]
+pub struct SendSyncOutputStream(OutputStream);
+unsafe impl Send for SendSyncOutputStream {}
+unsafe impl Sync for SendSyncOutputStream {}
+
 pub struct AudioState {
     sink: Option<Sink>,
-    _stream: OutputStream,
+    _stream: SendSyncOutputStream,
     stream_handle: OutputStreamHandle,
     current_path: Option<String>,
     duration: f64,
@@ -91,7 +96,7 @@ impl AudioEngine {
         let fft_buffer = Arc::new(parking_lot::Mutex::new(VecDeque::with_capacity(4096)));
         let state = Arc::new(parking_lot::Mutex::new(AudioState {
             sink: None,
-            _stream: stream,
+            _stream: SendSyncOutputStream(stream),
             stream_handle,
             current_path: None,
             duration: 0.0,
@@ -172,11 +177,10 @@ impl AudioEngine {
                     // Track End Detection
                     if is_empty {
                         if !track_ended_emitted {
+                            let state_lock = state_clone.lock();
+                            info!("Track finished playing. Emitting track_ended event.");
+                            let _ = state_lock.app_handle.emit("track_ended", ());
                             track_ended_emitted = true;
-                            if let Some(state_lock) = state_clone.try_lock() {
-                                info!("Track finished playing. Emitting track_ended event.");
-                                let _ = state_lock.app_handle.emit("track_ended", ());
-                            }
                         }
                     } else {
                         track_ended_emitted = false;
@@ -308,9 +312,13 @@ impl AudioEngine {
             return Err("Seek position cannot be negative".to_string());
         }
         let state = self.state.lock();
+        if position > state.duration && state.duration > 0.0 {
+            return Err(format!("Seek position ({:.2}s) exceeds track duration ({:.2}s)", position, state.duration));
+        }
         if let Some(sink) = &state.sink {
             info!("Seeking to position: {:.2}s", position);
-            let _ = sink.try_seek(Duration::from_secs_f64(position));
+            sink.try_seek(Duration::from_secs_f64(position))
+                .map_err(|e| format!("Seek failed: {}", e))?;
         }
         Ok(())
     }

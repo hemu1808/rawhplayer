@@ -30,9 +30,14 @@ export const SearchPage: React.FC<SearchPageProps> = ({ tracks, onPlay }) => {
       e.preventDefault();
       if (sourceMode === 'youtube' && query) {
           setIsSearching(true);
-          const results = await searchYouTube(query);
-          setYtResults(results);
-          setIsSearching(false);
+          try {
+              const results = await searchYouTube(query);
+              setYtResults(results);
+          } catch (error) {
+              console.error("YouTube search error:", error);
+          } finally {
+              setIsSearching(false);
+          }
       }
   };
 

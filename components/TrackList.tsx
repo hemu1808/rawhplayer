@@ -24,6 +24,15 @@ export const TrackList: React.FC<TrackListProps> = ({
   onRemove,
   onUpload
 }) => {
+  const [filter, setFilter] = React.useState('');
+
+  const filteredTracks = React.useMemo(() => {
+    return tracks.filter(track => 
+      track.name.toLowerCase().includes(filter.toLowerCase()) ||
+      track.artist.toLowerCase().includes(filter.toLowerCase())
+    );
+  }, [tracks, filter]);
+
   return (
     <div className="flex flex-col h-full w-full md:w-[340px] shrink-0 border-l border-white/5 bg-black/40 backdrop-blur-xl shadow-2xl relative">
       {/* Glossy Overlay */}
@@ -53,6 +62,8 @@ export const TrackList: React.FC<TrackListProps> = ({
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500 group-focus-within:text-white transition-colors" strokeWidth={1.5} />
             <input 
                 type="text" 
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
                 placeholder="Filter tracks..." 
                 className="w-full bg-black/20 border border-white/5 focus:border-white/20 rounded-lg py-2 pl-9 pr-4 text-xs text-white placeholder:text-neutral-600 outline-none transition-all"
             />
@@ -61,18 +72,18 @@ export const TrackList: React.FC<TrackListProps> = ({
 
       {/* List */}
       <div className="flex-1 overflow-y-auto px-3 pb-3 space-y-1 custom-scrollbar z-10">
-        {tracks.length === 0 ? (
+        {filteredTracks.length === 0 ? (
              <div className="flex flex-col items-center justify-center h-48 text-center p-6 border border-dashed border-white/5 rounded-xl mx-3 bg-white/[0.02]">
                 <div className="w-12 h-12 bg-white/5 rounded-full flex items-center justify-center mb-4 text-neutral-600">
                     <Music size={20} strokeWidth={1} />
                 </div>
-                <h3 className="font-medium text-white/80 mb-1 text-sm">Library Empty</h3>
+                <h3 className="font-medium text-white/80 mb-1 text-sm">{filter ? 'No results found' : 'Library Empty'}</h3>
                 <p className="text-[11px] text-neutral-500 font-light">
-                    Drag files here to play
+                    {filter ? 'Try a different filter term' : 'Drag files here to play'}
                 </p>
             </div>
         ) : (
-            tracks.map((track, index) => (
+            filteredTracks.map((track, index) => (
             <div 
                 key={track.id}
                 className={`group relative flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-all duration-300 border ${

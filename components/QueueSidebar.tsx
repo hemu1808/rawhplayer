@@ -12,50 +12,7 @@ interface QueueSidebarProps {
   onShuffle: () => void;
   onClear: () => void;
 }
-
-const QueueItem: React.FC<{ 
-    track: Track; 
-    isActive?: boolean; 
-    isHistory?: boolean;
-    onClick: () => void; 
-    onRemove: () => void; 
-}> = ({ track, isActive, isHistory, onClick, onRemove }) => (
-    <div 
-        className={`group flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-all border ${
-            isActive 
-            ? 'bg-white/10 border-white/10' 
-            : 'border-transparent hover:bg-white/5 hover:border-white/5'
-        } ${isHistory ? 'opacity-50 grayscale hover:grayscale-0 hover:opacity-100' : ''}`}
-        onClick={onClick}
-    >
-        <div className="relative w-10 h-10 rounded bg-neutral-900 overflow-hidden shrink-0 border border-white/10">
-            {track.image ? (
-                <img src={track.image} className="w-full h-full object-cover" />
-            ) : (
-                <div className="w-full h-full flex items-center justify-center bg-white/5">
-                    <AudioWaveform size={14} className="text-neutral-500" />
-                </div>
-            )}
-            {isActive && (
-                <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
-                    <div className="w-1 h-3 bg-primary-500 animate-pulse" />
-                </div>
-            )}
-        </div>
-        <div className="flex-1 min-w-0">
-            <div className={`text-xs font-medium truncate ${isActive ? 'text-primary-400' : 'text-neutral-200'}`}>
-                {track.name}
-            </div>
-            <div className="text-[10px] text-neutral-500 truncate">{track.artist}</div>
-        </div>
-        <button 
-            onClick={(e) => { e.stopPropagation(); onRemove(); }}
-            className="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-red-500/20 hover:text-red-400 rounded text-neutral-500 transition-all"
-        >
-            <Trash2 size={12} />
-        </button>
-    </div>
-);
+import { QueueItem } from './QueueDrawer';
 
 export const QueueSidebar: React.FC<QueueSidebarProps> = ({ 
     tracks, 

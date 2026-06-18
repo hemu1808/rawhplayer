@@ -19,14 +19,25 @@ export const ConnectPage: React.FC<ConnectPageProps> = ({ onPlayUrl, onImportPla
   const handleStreamLoad = () => {
       if (!streamUrl || !onPlayUrl) return;
       
-      let finalUrl = streamUrl;
+      let finalUrl = streamUrl.trim();
       // Google Drive Smart Parser
-      if (streamUrl.includes('drive.google.com') && streamUrl.includes('/file/d/')) {
-          const idMatch = streamUrl.match(/\/d\/(.*?)\//);
+      if (finalUrl.includes('drive.google.com') && finalUrl.includes('/file/d/')) {
+          const idMatch = finalUrl.match(/\/d\/(.*?)\//);
           if (idMatch && idMatch[1]) {
-              finalUrl = `https://drive.google.com/uc?export=download&id=${idMatch[1]}`;
+              const id = idMatch[1];
+              // Validate ID format to prevent redirection template pollution
+              if (/^[a-zA-Z0-9_-]+$/.test(id)) {
+                  finalUrl = `https://drive.google.com/uc?export=download&id=${id}`;
+              }
           }
       }
+
+      // Enforce HTTP/HTTPS protocols (prevent javascript:, file:, etc.)
+      if (!/^https?:\/\//i.test(finalUrl)) {
+          console.error("Invalid URL protocol. Only HTTP/HTTPS links are supported.");
+          return;
+      }
+
       onPlayUrl(finalUrl);
   };
 
@@ -77,9 +88,9 @@ export const ConnectPage: React.FC<ConnectPageProps> = ({ onPlayUrl, onImportPla
                 
                 <div className="flex flex-col md:flex-row gap-8 relative z-10">
                     <div className="flex-1">
-                        <h4 className="text-xl font-bold text-white mb-2">Import from Spotify or Apple Music</h4>
+                        <h4 className="text-xl font-bold text-white mb-2">Import from Spotify or Apple Music (Simulated Demo)</h4>
                         <p className="text-sm text-neutral-400 mb-6 max-w-md">
-                            Paste a playlist link. Our engine will cross-reference the metadata and build a high-quality queue using our available audio sources.
+                            Paste a playlist link. (Simulated Demo Bridge: Parses the link format and resolves matched high-fidelity tracks via search).
                         </p>
                         
                         <div className="flex gap-2">

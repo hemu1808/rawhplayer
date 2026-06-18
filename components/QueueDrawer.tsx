@@ -14,7 +14,7 @@ interface QueueDrawerProps {
   onClear: () => void;
 }
 
-const QueueItem: React.FC<{ 
+export const QueueItem: React.FC<{ 
     track: Track; 
     isActive?: boolean; 
     isHistory?: boolean;

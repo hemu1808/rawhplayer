@@ -23,12 +23,29 @@ export const Visualizer: React.FC<VisualizerProps> = ({ isPlaying }) => {
   }, [isPlaying]);
 
   useEffect(() => {
-    const unlisten = listen<{ fft: number[] }>('fft_data', (event) => {
-      fftDataRef.current = event.payload.fft;
-    });
+    let active = true;
+    let unlistenFn: (() => void) | null = null;
+    
+    const setupListener = async () => {
+      const u = await listen<{ fft: number[] }>('fft_data', (event) => {
+        if (active) {
+          fftDataRef.current = event.payload.fft;
+        }
+      });
+      if (active) {
+        unlistenFn = u;
+      } else {
+        u();
+      }
+    };
+    
+    setupListener();
 
     return () => {
-      unlisten.then(f => f());
+      active = false;
+      if (unlistenFn) {
+        unlistenFn();
+      }
     };
   }, []);
 

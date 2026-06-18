@@ -55,6 +55,19 @@ const App: React.FC = () => {
   const mouseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const currentTrack = tracks[currentTrackIndex];
 
+  // Refs to prevent stale closures and event listener churn (H-5, H-6, H-7)
+  const audioStateRef = useRef(audioState);
+  audioStateRef.current = audioState;
+
+  const currentTrackIndexRef = useRef(currentTrackIndex);
+  currentTrackIndexRef.current = currentTrackIndex;
+
+  const tracksRef = useRef(tracks);
+  tracksRef.current = tracks;
+
+  const playbackModeRef = useRef(playbackMode);
+  playbackModeRef.current = playbackMode;
+
   // --- MOUSE IDLE (Cinematic Feel) ---
   useEffect(() => {
     const handleMove = () => {
@@ -88,7 +101,32 @@ const App: React.FC = () => {
       };
   }, []);
 
-  const showToast = (msg: string) => setToastMsg(msg);
+      // Manage revoking of track blob URLs to prevent memory leaks (C-4)
+      const prevTracksRef = useRef<Track[]>([]);
+      useEffect(() => {
+          const removedTracks = prevTracksRef.current.filter(
+              pt => !tracks.some(t => t.id === pt.id)
+          );
+          for (const track of removedTracks) {
+              if (track.image && track.image.startsWith('blob:')) {
+                  URL.revokeObjectURL(track.image);
+              }
+          }
+          prevTracksRef.current = tracks;
+      }, [tracks]);
+
+      useEffect(() => {
+          return () => {
+              // Revoke all remaining blob URLs on unmount
+              for (const track of prevTracksRef.current) {
+                  if (track.image && track.image.startsWith('blob:')) {
+                      URL.revokeObjectURL(track.image);
+                  }
+              }
+          };
+      }, []);
+
+      const showToast = (msg: string) => setToastMsg(msg);
 
   // --- METADATA EXTRACTION ---
   const extractMetadata = async (file: File): Promise<Partial<Track>> => {
@@ -115,7 +153,7 @@ const App: React.FC = () => {
       });
   };
 
-  const processFiles = async (files: FileList | File[]) => {
+  const processFiles = useCallback(async (files: FileList | File[]) => {
     const newTracks: Track[] = [];
     
     for (const file of Array.from(files)) {
@@ -147,21 +185,24 @@ const App: React.FC = () => {
     }
 
     if (newTracks.length > 0) {
-        setTracks(prev => [...prev, ...newTracks]);
+        setTracks(prev => {
+            const updated = [...prev, ...newTracks];
+            if (prev.length === 0) {
+                 setCurrentTrackIndex(0);
+                 setAudioState(p => ({ ...p, isPlaying: true }));
+            }
+            return updated;
+        });
         showToast(`Imported ${newTracks.length} tracks`);
-        if (tracks.length === 0) {
-             setCurrentTrackIndex(0);
-             setAudioState(prev => ({ ...prev, isPlaying: true }));
-        }
     }
-  };
+  }, []);
 
   // --- GLOBAL DRAG AND DROP ---
   const handleDragDrop = useCallback((e: DragEvent) => {
       e.preventDefault();
       setIsDragging(false);
       if (e.dataTransfer?.files) processFiles(e.dataTransfer.files);
-  }, [tracks]);
+  }, [processFiles]);
 
   useEffect(() => {
       const handleDragOver = (e: DragEvent) => { e.preventDefault(); setIsDragging(true); };
@@ -180,30 +221,95 @@ const App: React.FC = () => {
 
   // --- CONTROLS LOGIC ---
   const handleNext = useCallback(() => {
-     if (tracks.length === 0) return;
-     let nextIdx = currentTrackIndex + 1;
-     if (playbackMode === PlaybackMode.SHUFFLE) nextIdx = Math.floor(Math.random() * tracks.length);
-     if (nextIdx >= tracks.length) nextIdx = 0;
-     setCurrentTrackIndex(nextIdx);
-  }, [tracks, currentTrackIndex, playbackMode]);
+     if (tracksRef.current.length === 0) return;
+     setCurrentTrackIndex(prevIdx => {
+         let nextIdx = prevIdx + 1;
+         if (playbackModeRef.current === PlaybackMode.SHUFFLE) {
+             nextIdx = Math.floor(Math.random() * tracksRef.current.length);
+         }
+         if (nextIdx >= tracksRef.current.length) nextIdx = 0;
+         return nextIdx;
+     });
+  }, []);
 
-  const handlePrev = () => {
-      if (audioState.currentTime > 3) {
+  const handlePrev = useCallback(() => {
+      if (audioStateRef.current.currentTime > 3) {
           invoke('seek_audio', { position: 0.0 }).catch(console.error);
           return;
       }
-      let prev = currentTrackIndex - 1;
-      if (prev < 0) prev = tracks.length - 1;
-      setCurrentTrackIndex(prev);
-  };
+      setCurrentTrackIndex(prevIdx => {
+          let prev = prevIdx - 1;
+          if (prev < 0) prev = tracksRef.current.length - 1;
+          return prev;
+      });
+  }, []);
 
-  const handlePlayPause = () => {
-      if (currentTrackIndex === -1 && tracks.length > 0) {
-          setCurrentTrackIndex(0);
-          return;
-      }
-      invoke('toggle_play').catch(console.error);
-  };
+  const handlePlayPause = useCallback(() => {
+      setCurrentTrackIndex(prevIdx => {
+          if (prevIdx === -1 && tracksRef.current.length > 0) {
+              return 0;
+          }
+          invoke('toggle_play').catch(console.error);
+          return prevIdx;
+      });
+  }, []);
+
+  const handleRemoveTrack = useCallback((id: string) => {
+      setTracks(prev => {
+          const idx = prev.findIndex(t => t.id === id);
+          if (idx === -1) return prev;
+          
+          if (idx < currentTrackIndexRef.current) {
+              setCurrentTrackIndex(curr => curr - 1);
+          } else if (idx === currentTrackIndexRef.current) {
+              if (prev.length <= 1) {
+                  setCurrentTrackIndex(-1);
+                  setAudioState(s => ({ ...s, isPlaying: false }));
+              } else {
+                  const nextIdx = idx >= prev.length - 1 ? idx - 1 : idx;
+                  setCurrentTrackIndex(nextIdx);
+              }
+          }
+          return prev.filter(t => t.id !== id);
+      });
+  }, []);
+
+  const handlePlayNext = useCallback((id: string) => {
+      setTracks(prev => {
+          const idx = prev.findIndex(t => t.id === id);
+          if (idx === -1) return prev;
+          const targetIdx = currentTrackIndexRef.current + 1;
+          if (idx === currentTrackIndexRef.current || idx === targetIdx) return prev;
+          
+          const nextTracks = [...prev];
+          const [track] = nextTracks.splice(idx, 1);
+          if (idx < currentTrackIndexRef.current) {
+              setCurrentTrackIndex(curr => curr - 1);
+              nextTracks.splice(targetIdx - 1, 0, track);
+          } else {
+              nextTracks.splice(targetIdx, 0, track);
+          }
+          return nextTracks;
+      });
+      showToast("Queued track next");
+  }, []);
+
+  const handleAddToQueue = useCallback((id: string) => {
+      setTracks(prev => {
+          const idx = prev.findIndex(t => t.id === id);
+          if (idx === -1) return prev;
+          if (idx === prev.length - 1) return prev;
+          
+          const nextTracks = [...prev];
+          const [track] = nextTracks.splice(idx, 1);
+          if (idx < currentTrackIndexRef.current) {
+              setCurrentTrackIndex(curr => curr - 1);
+          }
+          nextTracks.push(track);
+          return nextTracks;
+      });
+      showToast("Added track to end of queue");
+  }, []);
 
   // Handle Playback File Selection
   useEffect(() => {
@@ -265,7 +371,7 @@ const App: React.FC = () => {
       
       window.addEventListener('keydown', handleKeyDown);
       return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [audioState.currentTime, audioState.duration, currentTrackIndex, tracks]);
+  }, []);
 
   // --- RENDER SECTION ---
   const renderContent = () => {
@@ -273,11 +379,11 @@ const App: React.FC = () => {
           case 'files':
               return <FilesPage 
                   tracks={tracks} 
-                  onPlay={(t) => { setCurrentTrackIndex(tracks.indexOf(t)); setAudioState(s => ({ ...s, isPlaying: true })); setActivePage('player'); }}
+                  onPlay={(t) => { setCurrentTrackIndex(tracks.findIndex(x => x.id === t.id)); setAudioState(s => ({ ...s, isPlaying: true })); setActivePage('player'); }}
                   onUpload={(e) => { if (e.target.files) processFiles(e.target.files); }}
-                  onPlayNext={(id) => { const idx = tracks.findIndex(t => t.id === id); if (idx !== -1) { showToast("Queued Next"); } }}
-                  onAddToQueue={(id) => showToast("Added to Queue")}
-                  onRemove={(id) => setTracks(prev => prev.filter(t => t.id !== id))}
+                  onPlayNext={handlePlayNext}
+                  onAddToQueue={handleAddToQueue}
+                  onRemove={handleRemoveTrack}
               />;
           case 'search':
               return <SearchPage tracks={tracks} onPlay={(t) => {
@@ -421,8 +527,8 @@ const App: React.FC = () => {
              currentTrackId={currentTrack?.id || null}
              isOpen={showQueue} 
              onClose={() => setShowQueue(false)}
-             onSelect={(t) => { setCurrentTrackIndex(tracks.indexOf(t)); setAudioState(s => ({ ...s, isPlaying: true })); }}
-             onRemove={(id) => setTracks(prev => prev.filter(t => t.id !== id))}
+             onSelect={(t) => { setCurrentTrackIndex(tracks.findIndex(x => x.id === t.id)); setAudioState(s => ({ ...s, isPlaying: true })); }}
+             onRemove={handleRemoveTrack}
              onShuffle={() => {}}
              onClear={() => setTracks([])}
           />

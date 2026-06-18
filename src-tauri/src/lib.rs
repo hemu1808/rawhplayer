@@ -1,7 +1,7 @@
 mod audio_engine;
 
 use audio_engine::AudioEngine;
-use tauri::{AppHandle, Manager, State};
+use tauri::{Manager, State};
 
 #[tauri::command]
 fn play_file(path: String, engine: State<'_, AudioEngine>) -> Result<(), String> {
@@ -37,7 +37,8 @@ async fn get_track_insight(artist: String, title: String) -> Result<String, Stri
 
     let url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
     
-    let response = client.post(format!("{}?key={}", url, api_key))
+    let response = client.post(url)
+        .header("x-goog-api-key", &api_key)
         .json(&serde_json::json!({
             "contents": [{
                 "parts": [{
@@ -64,6 +65,36 @@ async fn get_track_insight(artist: String, title: String) -> Result<String, Stri
     Ok(text.trim().to_string())
 }
 
+#[tauri::command]
+async fn search_youtube(query: String) -> Result<serde_json::Value, String> {
+    let api_key = std::env::var("YOUTUBE_API_KEY")
+        .or_else(|_| std::env::var("VITE_YOUTUBE_API_KEY"))
+        .map_err(|_| "YouTube API key is not configured. Please set the YOUTUBE_API_KEY environment variable on the host.".to_string())?;
+
+    let client = reqwest::Client::new();
+    let response = client.get("https://www.googleapis.com/youtube/v3/search")
+        .query(&[
+            ("part", "snippet"),
+            ("maxResults", "10"),
+            ("q", &query),
+            ("type", "video"),
+            ("key", &api_key),
+        ])
+        .send()
+        .await
+        .map_err(|e| format!("Failed to send request to YouTube: {}", e))?;
+
+    if !response.status().is_success() {
+        let err_text = response.text().await.unwrap_or_default();
+        return Err(format!("YouTube API returned error: {}", err_text));
+    }
+
+    let res_json: serde_json::Value = response.json().await
+        .map_err(|e| format!("Failed to parse YouTube response: {}", e))?;
+
+    Ok(res_json)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -76,7 +107,7 @@ pub fn run() {
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
-        play_file, toggle_play, seek_audio, set_volume, get_track_insight
+        play_file, toggle_play, seek_audio, set_volume, get_track_insight, search_youtube
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
