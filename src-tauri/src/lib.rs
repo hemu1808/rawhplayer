@@ -23,6 +23,16 @@ fn set_volume(volume: f32, engine: State<'_, AudioEngine>) -> Result<(), String>
     engine.set_volume(volume)
 }
 
+#[tauri::command]
+fn set_equalizer_band(index: usize, gain: f32, engine: State<'_, AudioEngine>) -> Result<(), String> {
+    engine.set_equalizer_band(index, gain)
+}
+
+#[tauri::command]
+fn set_purist_mode(is_purist: bool, engine: State<'_, AudioEngine>) -> Result<(), String> {
+    engine.set_purist_mode(is_purist)
+}
+
 #[derive(serde::Deserialize)]
 struct GeminiPart {
     text: String,
@@ -128,7 +138,7 @@ pub fn run() {
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
-        play_file, toggle_play, seek_audio, set_volume, get_track_insight, search_youtube
+        play_file, toggle_play, seek_audio, set_volume, get_track_insight, search_youtube, set_equalizer_band, set_purist_mode
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

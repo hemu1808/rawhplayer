@@ -158,6 +158,21 @@ const App: React.FC = () => {
       localStorage.setItem('rawh_eq_bands', JSON.stringify(eqBands));
   }, [currentPresetId, eqBands]);
 
+  // Sync Equalizer state to Rust backend
+  useEffect(() => {
+      invoke('set_purist_mode', { isPurist: audioState.isPuristMode }).catch(err => {
+          console.error("Failed to sync purist mode to backend:", err);
+      });
+  }, [audioState.isPuristMode]);
+
+  useEffect(() => {
+      eqBands.forEach((band, i) => {
+          invoke('set_equalizer_band', { index: i, gain: band.gain }).catch(err => {
+              console.error(`Failed to sync EQ band ${i} to backend:`, err);
+          });
+      });
+  }, [eqBands]);
+
   // Apply persisted theme colors on launch and on theme change
   useEffect(() => {
       const theme = THEMES.find(t => t.id === currentThemeId) || THEMES.find(t => t.id === 'reference');
