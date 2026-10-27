@@ -1,9 +1,9 @@
 
 import React, { useEffect, useState } from 'react';
-import { FolderOpen, Disc, Settings, Link2, Search, ActivitySquare } from 'lucide-react';
+import { FolderOpen, Disc, Settings, Link2, Search, ActivitySquare, ListMusic, Radio } from 'lucide-react';
 import { Logo } from './Logo';
 
-type Page = 'files' | 'player' | 'settings' | 'connect' | 'search' | 'audiophile';
+type Page = 'files' | 'player' | 'settings' | 'connect' | 'search' | 'audiophile' | 'playlist' | 'radio';
 
 interface NavigationProps {
   activePage: Page;
@@ -23,7 +23,9 @@ export const Navigation: React.FC<NavigationProps> = ({ activePage, onNavigate }
   const navItems: { id: Page; icon: React.ElementType; label: string }[] = [
     { id: 'player', icon: Disc, label: 'Player' },
     { id: 'files', icon: FolderOpen, label: 'Library' },
+    { id: 'playlist', icon: ListMusic, label: 'Playlist' },
     { id: 'search', icon: Search, label: 'Search' },
+    { id: 'radio', icon: Radio, label: 'Radio' },
     { id: 'audiophile', icon: ActivitySquare, label: 'Audio' },
     { id: 'connect', icon: Link2, label: 'Net' },
     { id: 'settings', icon: Settings, label: 'Setup' },

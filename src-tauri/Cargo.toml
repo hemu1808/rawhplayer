@@ -1,9 +1,9 @@
 [package]
 name = "rawhplayer"
-version = "0.1.0"
+version = "3.0.0"
 description = "Rawh Player Native Audio Engine"
 authors = ["Rawh Audio"]
-license = ""
+license = "MIT"
 repository = ""
 edition = "2021"
 rust-version = "1.77.2"
@@ -28,6 +28,14 @@ rustfft = "6.4.1"
 parking_lot = "0.12.5"
 rodio = { version = "0.19.0", features = ["symphonia-all"] }
 reqwest = { version = "0.12", features = ["json"] }
+cpal = "0.15"
+lofty = "0.22"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-shell = "2"
+notify = "7"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-updater = "2"
 
 [profile.release]
 opt-level = 3

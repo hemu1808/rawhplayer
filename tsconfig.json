@@ -26,5 +26,12 @@
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "strict": true
-  }
+  },
+  "exclude": [
+    "tests",
+    "vitest.config.ts",
+    "node_modules",
+    "dist",
+    "src-tauri"
+  ]
 }

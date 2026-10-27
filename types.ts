@@ -93,9 +93,35 @@ export const EQ_PRESETS: EqualizerPreset[] = [
 
 export const THEMES: ThemeColor[] = [
   { name: 'Immersive Glass', id: 'immersive', colors: { 300: '#ffffff', 400: '#e5e5e5', 500: '#ffffff', 600: '#a3a3a3', 900: '#262626' } },
+  { name: 'Dynamic', id: 'dynamic', colors: { 300: '#ffffff', 400: '#cccccc', 500: '#aaaaaa', 600: '#666666', 900: '#333333' } },
   { name: 'Rawh Gold', id: 'gold', colors: { 300: '#fcd34d', 400: '#fbbf24', 500: '#f59e0b', 600: '#d97706', 900: '#78350f' } },
   { name: 'Reference', id: 'reference', colors: { 300: '#d4d4d4', 400: '#a3a3a3', 500: '#737373', 600: '#525252', 900: '#171717' } },
   { name: 'Analog Warm', id: 'analog', colors: { 300: '#fdba74', 400: '#fb923c', 500: '#f97316', 600: '#ea580c', 900: '#431407' } },
   { name: 'Cyber Blue', id: 'cyber', colors: { 300: '#67e8f9', 400: '#22d3ee', 500: '#06b6d4', 600: '#0891b2', 900: '#164e63' } },
   { name: 'Forest Studio', id: 'forest', colors: { 300: '#86efac', 400: '#4ade80', 500: '#22c55e', 600: '#16a34a', 900: '#14532d' } },
 ];
+
+export type PlayerAction =
+  | { type: 'PLAY' }
+  | { type: 'PAUSE' }
+  | { type: 'SEEK'; payload: number }
+  | { type: 'SET_VOLUME'; payload: number }
+  | { type: 'TOGGLE_MUTE' }
+  | { type: 'SET_PLAYBACK_RATE'; payload: number }
+  | { type: 'SET_PURIST_MODE'; payload: boolean }
+  | { type: 'SET_BUFFER_SIZE'; payload: number }
+  | { type: 'SET_PRECISION'; payload: '16-bit' | '32-bit float' }
+  | { type: 'UPDATE_PLAYBACK'; payload: { currentTime: number; duration: number; isPlaying: boolean } }
+  | { type: 'SET_STATE'; payload: Partial<AudioState> };
+
+export type LibraryAction =
+  | { type: 'ADD_TRACKS'; payload: Track[] }
+  | { type: 'REMOVE_TRACK'; payload: string }
+  | { type: 'SET_CURRENT_TRACK'; payload: number }
+  | { type: 'PLAY_NEXT'; payload: string }
+  | { type: 'ADD_TO_QUEUE'; payload: string }
+  | { type: 'SHUFFLE' }
+  | { type: 'CLEAR' }
+  | { type: 'SET_PLAYBACK_MODE'; payload: PlaybackMode }
+  | { type: 'TOGGLE_LIKE'; payload: string }
+  | { type: 'SET_STATE'; payload: { tracks: Track[]; currentTrackIndex: number; playbackMode: PlaybackMode } };

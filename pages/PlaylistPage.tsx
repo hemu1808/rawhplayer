@@ -98,12 +98,19 @@ export const PlaylistPage: React.FC<PlaylistPageProps> = ({
   onClear
 }) => {
     
+  const [activeFilter, setActiveFilter] = React.useState<'All Tracks' | 'Favorites' | 'Recently Added'>('All Tracks');
+
+  const filteredTracks = React.useMemo(() => {
+    if (activeFilter === 'Favorites') return tracks.filter(t => t.isLiked);
+    if (activeFilter === 'Recently Added') return [...tracks].sort((a, b) => (b.dateAdded || 0) - (a.dateAdded || 0)).slice(0, 50);
+    return tracks;
+  }, [tracks, activeFilter]);
+
   const currentIndex = tracks.findIndex(t => t.id === currentTrackId);
   const historyTracks = currentIndex > 0 ? tracks.slice(0, currentIndex) : [];
   const currentTrack = currentIndex !== -1 ? tracks[currentIndex] : null;
   const nextTracks = currentIndex !== -1 ? tracks.slice(currentIndex + 1) : tracks;
 
-  // If no track is playing but list exists, show all as next
   const showAllAsNext = currentIndex === -1 && tracks.length > 0;
 
   const ActionButtons = (
@@ -124,45 +131,67 @@ export const PlaylistPage: React.FC<PlaylistPageProps> = ({
   );
 
   return (
-    <ScrollArea title="Queue" subtitle={`${tracks.length} tracks`} action={ActionButtons}>
+    <ScrollArea title="Playlists" subtitle={`${filteredTracks.length} tracks`} action={ActionButtons}>
       <div className="px-6 md:px-8 space-y-6 pb-32">
-        {tracks.length === 0 && (
-            <div className="h-[60vh] flex flex-col items-center justify-center text-neutral-600 italic space-y-6">
+        
+        <div className="flex gap-2 overflow-x-auto pb-2">
+          {['All Tracks', 'Favorites', 'Recently Added'].map(f => (
+            <button
+              key={f}
+              onClick={() => setActiveFilter(f as any)}
+              className={`px-4 py-2 rounded-full text-sm font-bold transition-colors whitespace-nowrap ${
+                activeFilter === f 
+                  ? 'bg-primary-500 text-black' 
+                  : 'bg-white/5 text-white/70 hover:bg-white/10 hover:text-white'
+              }`}
+            >
+              {f}
+            </button>
+          ))}
+        </div>
+
+        {filteredTracks.length === 0 && (
+            <div className="h-[40vh] flex flex-col items-center justify-center text-neutral-600 italic space-y-6">
                 <div className="w-24 h-24 bg-white/5 rounded-3xl flex items-center justify-center border border-white/5">
                     <ListStart size={40} className="opacity-30" />
                 </div>
-                <p className="font-light tracking-wide">Queue is empty.</p>
+                <p className="font-light tracking-wide">No tracks found.</p>
             </div>
         )}
 
-        {/* History Section */}
-        {historyTracks.length > 0 && (
-            <div className="space-y-2">
-                <div className="flex items-center gap-2 text-xs font-bold text-neutral-600 uppercase tracking-widest px-1">
-                    <History size={12} /> Previously
+        {activeFilter === 'All Tracks' ? (
+          <>
+            {historyTracks.length > 0 && (
+                <div className="space-y-2">
+                    <div className="flex items-center gap-2 text-xs font-bold text-neutral-600 uppercase tracking-widest px-1">
+                        <History size={12} /> Previously
+                    </div>
+                    {historyTracks.map(t => <TrackRow key={t.id} track={t} isHistory onSelect={onSelect} onRemove={onRemove} />)}
                 </div>
-                {historyTracks.map(t => <TrackRow key={t.id} track={t} isHistory onSelect={onSelect} onRemove={onRemove} />)}
-            </div>
-        )}
+            )}
 
-        {/* Current Track */}
-        {currentTrack && (
-            <div className="space-y-2">
-                <div className="flex items-center gap-2 text-xs font-bold text-primary-500 uppercase tracking-widest px-1">
-                    <AudioWaveform size={12} /> Now Playing
+            {currentTrack && (
+                <div className="space-y-2">
+                    <div className="flex items-center gap-2 text-xs font-bold text-primary-500 uppercase tracking-widest px-1">
+                        <AudioWaveform size={12} /> Now Playing
+                    </div>
+                    <TrackRow track={currentTrack} isPlaying onSelect={onSelect} onRemove={onRemove} />
                 </div>
-                <TrackRow track={currentTrack} isPlaying onSelect={onSelect} onRemove={onRemove} />
-            </div>
-        )}
+            )}
 
-        {/* Up Next */}
-        {(nextTracks.length > 0 || showAllAsNext) && (
-            <div className="space-y-2">
-                 <div className="flex items-center gap-2 text-xs font-bold text-neutral-400 uppercase tracking-widest px-1 pt-4 border-t border-white/5">
-                    <ArrowDown size={12} /> Up Next
+            {(nextTracks.length > 0 || showAllAsNext) && (
+                <div className="space-y-2">
+                     <div className="flex items-center gap-2 text-xs font-bold text-neutral-400 uppercase tracking-widest px-1 pt-4 border-t border-white/5">
+                        <ArrowDown size={12} /> Up Next
+                    </div>
+                    {(showAllAsNext ? tracks : nextTracks).map(t => <TrackRow key={t.id} track={t} onSelect={onSelect} onRemove={onRemove} />)}
                 </div>
-                {(showAllAsNext ? tracks : nextTracks).map(t => <TrackRow key={t.id} track={t} onSelect={onSelect} onRemove={onRemove} />)}
-            </div>
+            )}
+          </>
+        ) : (
+          <div className="space-y-2">
+             {filteredTracks.map(t => <TrackRow key={t.id} track={t} isPlaying={t.id === currentTrackId} onSelect={onSelect} onRemove={onRemove} />)}
+          </div>
         )}
       </div>
     </ScrollArea>
