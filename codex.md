@@ -1,5 +1,7 @@
 # Rawh Player — Living Engineering Dossier
 
+> 2026-10-28: The user explicitly authorized implementation of the launch review. Historical proposal-only notes below are superseded for that scope. Current implementation and validation status is recorded in `IMPLEMENTATION_STATUS.md`; public launch is not yet ready.
+
 > Canonical project memory for analysis, implementation planning, walkthroughs, deployment and validation. Keep and update this file for the lifetime of the project.
 
 ## Document control
@@ -29,18 +31,18 @@ Large dirty tree; ESLint missing; concurrent tests failed to spawn; deprecated V
 
 ## Production scorecard
 
-| Area | Initial status | Enterprise exit requirement |
-|---|---|---|
-| Product | Needs journey review | Acceptance criteria and automated critical journeys |
-| Architecture | Needs improvement | Bounded modules, explicit contracts and dependency direction |
-| Security/privacy | Needs threat model | Server-enforced auth, schemas, secrets and abuse/audit controls |
-| Reliability | Incomplete | Timeouts, retries, idempotency, recovery and failure tests |
-| Performance | Unbudgeted | CI budgets plus production measurements |
-| Accessibility | Unverified | WCAG 2.2 AA keyboard/screen-reader evidence |
-| Testing | Uneven | Unit, integration, contract and E2E gates |
-| Delivery | Incomplete | Immutable artifact, staged promotion, migration and rollback |
-| Operations | Incomplete | Logs, metrics, traces, SLOs, alerts and runbooks |
-| Documentation | Established here | Setup, architecture, API, decisions and walkthrough stay current |
+| Area             | Initial status       | Enterprise exit requirement                                      |
+| ---------------- | -------------------- | ---------------------------------------------------------------- |
+| Product          | Needs journey review | Acceptance criteria and automated critical journeys              |
+| Architecture     | Needs improvement    | Bounded modules, explicit contracts and dependency direction     |
+| Security/privacy | Needs threat model   | Server-enforced auth, schemas, secrets and abuse/audit controls  |
+| Reliability      | Incomplete           | Timeouts, retries, idempotency, recovery and failure tests       |
+| Performance      | Unbudgeted           | CI budgets plus production measurements                          |
+| Accessibility    | Unverified           | WCAG 2.2 AA keyboard/screen-reader evidence                      |
+| Testing          | Uneven               | Unit, integration, contract and E2E gates                        |
+| Delivery         | Incomplete           | Immutable artifact, staged promotion, migration and rollback     |
+| Operations       | Incomplete           | Logs, metrics, traces, SLOs, alerts and runbooks                 |
+| Documentation    | Established here     | Setup, architecture, API, decisions and walkthrough stay current |
 
 ## Immediate priorities
 

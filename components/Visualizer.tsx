@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useMemo, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 
 interface VisualizerProps {
@@ -20,21 +20,28 @@ export const Visualizer: React.FC<VisualizerProps> = ({ isPlaying }) => {
   }, []);
 
   // Optimization: Cache colors only once or when necessary, not every frame
-  const colors = useMemo(() => {
+  const readColors = () => {
     // We check for window to ensure SSR safety if needed, though this is client-only
     if (typeof window === 'undefined') return { primary500: '#f59e0b', primary900: '#78350f' };
-    
+
     const styles = getComputedStyle(document.documentElement);
     return {
-        primary500: styles.getPropertyValue('--primary-500').trim() || '#f59e0b',
-        primary900: styles.getPropertyValue('--primary-900').trim() || '#78350f'
+      primary500: styles.getPropertyValue('--primary-500').trim() || '#f59e0b',
+      primary900: styles.getPropertyValue('--primary-900').trim() || '#78350f',
     };
-  }, [isPlaying]);
+  };
+  const [colors, setColors] = useState(readColors);
+  useEffect(() => {
+    const refresh = () => setColors(readColors());
+    window.addEventListener('rawh-theme-changed', refresh);
+    return () => window.removeEventListener('rawh-theme-changed', refresh);
+  }, []);
 
   useEffect(() => {
+    if (!window.__TAURI_INTERNALS__) return;
     let active = true;
     let unlistenFn: (() => void) | null = null;
-    
+
     const setupListener = async () => {
       const u = await listen<{ fft: number[] }>('fft_data', (event) => {
         if (active) {
@@ -47,8 +54,10 @@ export const Visualizer: React.FC<VisualizerProps> = ({ isPlaying }) => {
         u();
       }
     };
-    
-    setupListener();
+
+    void setupListener().catch(() => {
+      fftDataRef.current = [];
+    });
 
     return () => {
       active = false;
@@ -88,11 +97,11 @@ export const Visualizer: React.FC<VisualizerProps> = ({ isPlaying }) => {
       ctx.fillStyle = gradient;
 
       // Only render first 33% of bins (Human hearing range mostly)
-      const renderCount = Math.floor(bufferLength * 0.33); 
+      const renderCount = Math.floor(bufferLength * 0.33);
 
       for (let i = 0; i < renderCount; i++) {
-        // Rust rustfft magnitudes can be large, normalize roughly
-        const v = Math.min(dataArray[i] / 500, 1.0); 
+        // The native FFT emits normalized amplitudes. Display a -80 to 0 dB range.
+        const v = Math.max(0, Math.min(1, (20 * Math.log10(Math.max(dataArray[i], 0.0001)) + 80) / 80));
         const barHeight = v * height;
         ctx.fillRect(x, height - barHeight, barWidth - 1, barHeight);
         x += barWidth;
@@ -102,15 +111,15 @@ export const Visualizer: React.FC<VisualizerProps> = ({ isPlaying }) => {
     };
 
     if (isPlaying && !prefersReducedMotion) {
-        draw();
+      draw();
     } else {
-        if(canvasRef.current) {
-            const ctx = canvasRef.current.getContext('2d');
-            if(ctx) ctx.clearRect(0,0, canvasRef.current.width, canvasRef.current.height);
-        }
-        if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+      if (canvasRef.current) {
+        const ctx = canvasRef.current.getContext('2d');
+        if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+      }
+      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
     }
-    
+
     return () => {
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
     };
@@ -118,38 +127,33 @@ export const Visualizer: React.FC<VisualizerProps> = ({ isPlaying }) => {
 
   // Handle High-DPI Scaling
   useEffect(() => {
-      const canvas = canvasRef.current;
-      if(!canvas) return;
-      
-      const resize = () => {
-          const parent = canvas.parentElement;
-          if(parent) {
-              const dpr = window.devicePixelRatio || 1;
-              const rect = parent.getBoundingClientRect();
-              
-              canvas.width = rect.width * dpr;
-              canvas.height = rect.height * dpr;
-              canvas.style.width = `${rect.width}px`;
-              canvas.style.height = `${rect.height}px`;
-              
-              const ctx = canvas.getContext('2d');
-              if(ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-          }
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const resize = () => {
+      const parent = canvas.parentElement;
+      if (parent) {
+        const dpr = window.devicePixelRatio || 1;
+        const rect = parent.getBoundingClientRect();
+
+        canvas.width = rect.width * dpr;
+        canvas.height = rect.height * dpr;
+        canvas.style.width = `${rect.width}px`;
+        canvas.style.height = `${rect.height}px`;
+
+        const ctx = canvas.getContext('2d');
+        if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       }
-      window.addEventListener('resize', resize);
-      resize();
-      
-      return () => window.removeEventListener('resize', resize);
+    };
+    window.addEventListener('resize', resize);
+    resize();
+
+    return () => window.removeEventListener('resize', resize);
   }, []);
 
   return (
     <div className="w-full h-full relative">
-      <canvas 
-        ref={canvasRef} 
-        role="img" 
-        aria-label="Audio Playback Visualizer Spectrogram" 
-        className="block w-full h-full" 
-      />
+      <canvas ref={canvasRef} role="img" aria-label="Audio Playback Visualizer Spectrogram" className="block w-full h-full" />
     </div>
   );
 };

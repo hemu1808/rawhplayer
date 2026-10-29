@@ -1,255 +1,297 @@
-import React from 'react';
-import { Shield, Volume2, Palette, ToggleRight, ToggleLeft } from 'lucide-react';
-import { ThemeColor, THEMES } from '../types';
-import { ScrollArea } from '../components/ScrollArea';
+import { useCallback, useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { THEMES, type ThemeColor, type AudioDevice } from '../types';
+import { ScrollArea } from '../components/ScrollArea';
+import { usePlayer } from '../context/PlayerContext';
+import { useLibrary } from '../context/LibraryContext';
+import { SoftwareUpdates } from '../components/SoftwareUpdates';
+import { LibraryMaintenance } from '../components/LibraryMaintenance';
+import { saveDeviceProfile } from '../services/deviceProfiles';
 
-interface SettingsPageProps {
-    currentThemeId: string;
-    onThemeChange: (theme: ThemeColor) => void;
-    isPuristMode: boolean;
-    onTogglePurist: () => void;
-    bufferSize?: number;
-    processingPrecision?: '16-bit' | '32-bit float';
-    onTogglePrecision?: () => void;
-    onBufferSizeChange?: (size: number) => void;
+interface Props {
+  currentThemeId: string;
+  onThemeChange: (theme: ThemeColor) => void;
+  isPuristMode: boolean;
+  onTogglePurist: () => void;
+  bufferSize?: number;
+  processingPrecision?: string;
+  onTogglePrecision?: () => void;
+  onBufferSizeChange?: (size: number) => void;
 }
-
-export const SettingsPage: React.FC<SettingsPageProps> = ({ 
-    currentThemeId, 
-    onThemeChange, 
-    isPuristMode, 
-    onTogglePurist, 
-    bufferSize = 2048,
-    processingPrecision = '32-bit float',
-    onTogglePrecision,
-    onBufferSizeChange
-}) => {
-    const [geminiKey, setGeminiKey] = React.useState(localStorage.getItem('rawh_gemini_api_key') || '');
-    const [youtubeKey, setYoutubeKey] = React.useState(localStorage.getItem('rawh_youtube_api_key') || '');
-    const [audioDevices, setAudioDevices] = React.useState<string[]>([]);
-    const [selectedDevice, setSelectedDevice] = React.useState<string>('default');
-    const [crossfade, setCrossfade] = React.useState<number>(0);
-
-    React.useEffect(() => {
-        invoke('list_audio_devices').then((devices: any) => {
-            if (Array.isArray(devices)) {
-                setAudioDevices(devices);
-            }
-        }).catch(e => console.error('Failed to list audio devices', e));
-    }, []);
-
-    const handleGeminiChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const val = e.target.value;
-        setGeminiKey(val);
-        localStorage.setItem('rawh_gemini_api_key', val);
+function download(name: string, text: string) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+  const anchor = document.createElement('a');
+  anchor.download = name;
+  anchor.href = url;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+export function SettingsPage({ currentThemeId, onThemeChange, isPuristMode, onTogglePurist }: Props) {
+  const { state: audioState, nativeInfo, refreshAudioInfo } = usePlayer();
+  const library = useLibrary();
+  const [devices, setDevices] = useState<AudioDevice[]>([]);
+  const [notice, setNotice] = useState('');
+  const [geminiKey, setGeminiKey] = useState('');
+  const [configured, setConfigured] = useState(false);
+  const [watchedFolders, setWatchedFolders] = useState<string[]>([]);
+  const [policy, setPolicy] = useState<{ allowUpdates: boolean; allowExternalServices: boolean; allowMetadataEdits: boolean } | null>(null);
+  const run = useCallback(
+    async (action: () => Promise<unknown>) => {
+      try {
+        await action();
+        setNotice('Saved.');
+        await refreshAudioInfo();
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [refreshAudioInfo],
+  );
+  useEffect(() => {
+    if (!window.__TAURI_INTERNALS__) return;
+    let active = true;
+    invoke<{ allowUpdates: boolean; allowExternalServices: boolean; allowMetadataEdits: boolean }>('deployment_policy')
+      .then((value) => {
+        if (active) setPolicy(value);
+      })
+      .catch((error) => {
+        if (active) setNotice(String(error));
+      });
+    invoke<AudioDevice[]>('list_audio_devices')
+      .then((value) => {
+        if (active) setDevices(value);
+      })
+      .catch((error) => {
+        if (active) setNotice(String(error));
+      });
+    invoke<{ gemini: boolean }>('credential_status')
+      .then((value) => {
+        if (active) setConfigured(value.gemini);
+      })
+      .catch(() => {});
+    invoke<string[]>('get_watched_folders')
+      .then((folders) => {
+        if (active) setWatchedFolders(folders);
+      })
+      .catch((error) => {
+        if (active) setNotice(String(error));
+      });
+    return () => {
+      active = false;
     };
-
-    const handleYoutubeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const val = e.target.value;
-        setYoutubeKey(val);
-        localStorage.setItem('rawh_youtube_api_key', val);
-    };
-
-    const handleCrossfadeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const val = Number(e.target.value);
-        setCrossfade(val);
-        invoke('set_crossfade_duration', { seconds: val }).catch(e => console.error('Failed to set crossfade', e));
-    };
-
-    const handleDeviceChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-        setSelectedDevice(e.target.value);
-        // Note: Actual device setting might need another invoke call depending on Rust implementation.
-    };
+  }, []);
   return (
-    <ScrollArea title="Settings" subtitle="Preferences & Customization">
-      <div className="px-6 md:px-8 space-y-8 max-w-[1600px]">
-        
-        {/* Personalization Section */}
-        <section>
-            <div className="flex items-center gap-2 mb-4 px-1">
-                <div className="w-8 h-8 rounded-full bg-primary-500/20 flex items-center justify-center text-primary-500">
-                    <Palette size={16} />
-                </div>
-                <h3 className="text-sm font-bold text-white uppercase tracking-widest">Look & Feel</h3>
-            </div>
-            <fieldset className="glass-panel rounded-3xl p-6 md:p-8 border-transparent">
-                <legend className="text-white font-medium mb-6 text-base px-1">Theme Engine</legend>
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
-                    {THEMES.map(theme => (
-                        <button 
-                            key={theme.id}
-                            onClick={() => onThemeChange(theme)}
-                            aria-label={`Select ${theme.name} theme`}
-                            className={`relative h-28 rounded-xl border transition-all duration-300 group overflow-hidden ${
-                                currentThemeId === theme.id 
-                                ? 'border-primary-500 ring-2 ring-primary-500/30 scale-105 z-10' 
-                                : 'border-white/10 hover:border-white/30'
-                            }`}
-                        >
-                            {/* Theme Preview Background */}
-                            <div className="absolute inset-0 bg-neutral-900" />
-                            <div className="absolute inset-0 opacity-50" style={{ background: `linear-gradient(135deg, ${theme.colors[900]}, ${theme.colors[500]})` }} />
-                            
-                            {theme.id === 'immersive' && <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent backdrop-blur-md" />}
-                            
-                            <div className="absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-black/80 to-transparent" />
-
-                            <div className="absolute top-3 right-3 w-4 h-4 rounded-full border border-white/20" style={{ background: theme.colors[500] }} />
-
-                            {currentThemeId === theme.id && (
-                                <div className="absolute inset-0 flex items-center justify-center z-10">
-                                    <div className="w-2 h-2 bg-white rounded-full shadow-[0_0_10px_white]" />
-                                </div>
-                            )}
-                            <span className="absolute bottom-3 left-3 text-[10px] text-white font-bold uppercase tracking-wider">
-                                {theme.name}
-                            </span>
-                        </button>
-                    ))}
-                </div>
-            </fieldset>
-        </section>
-
-        {/* Audio Section */}
-        <section>
-            <div className="flex items-center gap-2 mb-4 px-1">
-                <div className="w-8 h-8 rounded-full bg-primary-500/20 flex items-center justify-center text-primary-500">
-                    <Volume2 size={16} />
-                </div>
-                <h3 className="text-sm font-bold text-white uppercase tracking-widest">Audio Engine</h3>
-            </div>
-            <fieldset className="glass-panel rounded-3xl p-0 overflow-hidden border-transparent">
-                <legend className="sr-only">Audio Engine Configuration</legend>
-                <div className="p-6 flex items-center justify-between border-b border-white/5 hover:bg-white/5 transition-colors">
-                    <div>
-                        <label htmlFor="audio-purist-switch" className="text-white text-base font-medium mb-1 flex items-center gap-2 cursor-pointer">
-                             Audio Purist Mode <span className="px-1.5 py-0.5 rounded bg-primary-500 text-black text-[9px] font-bold">BIT PERFECT</span>
-                        </label>
-                        <div className="text-xs text-neutral-500">Bypasses EQ and DSP for transparent signal path.</div>
-                    </div>
-                    <button 
-                        id="audio-purist-switch"
-                        onClick={onTogglePurist} 
-                        role="switch"
-                        aria-checked={isPuristMode}
-                        aria-label="Audio Purist Mode"
-                        className={`transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500/50 rounded-lg ${isPuristMode ? 'text-primary-500' : 'text-neutral-600'}`}
-                    >
-                        {isPuristMode ? <ToggleRight size={32} /> : <ToggleLeft size={32} />}
-                    </button>
-                </div>
-                
-                <div className="p-6 flex items-center justify-between border-b border-white/5 hover:bg-white/5 transition-colors">
-                    <div>
-                        <label htmlFor="dsp-precision-switch" className="text-white text-base font-medium mb-1 cursor-pointer">32-Bit Floating Point</label>
-                        <div className="text-xs text-neutral-500">Internal DSP precision resolution.</div>
-                    </div>
-                    <button 
-                        id="dsp-precision-switch"
-                        onClick={onTogglePrecision} 
-                        role="switch"
-                        aria-checked={processingPrecision === '32-bit float'}
-                        aria-label="32-Bit Floating Point Precision"
-                        className={`transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500/50 rounded-lg ${processingPrecision === '32-bit float' ? 'text-primary-500' : 'text-neutral-600'}`}
-                    >
-                        {processingPrecision === '32-bit float' ? <ToggleRight size={32} /> : <ToggleLeft size={32} />}
-                    </button>
-                </div>
-
-                <div className="p-6 flex items-center justify-between hover:bg-white/5 transition-colors">
-                    <div>
-                        <label htmlFor="buffer-size-select" className="text-white text-base font-medium mb-1 cursor-pointer">Buffer Size</label>
-                        <div className="text-xs text-neutral-500">Lower latency vs stability.</div>
-                    </div>
-                    <select 
-                        id="buffer-size-select"
-                        value={bufferSize}
-                        onChange={(e) => onBufferSizeChange?.(Number(e.target.value))}
-                        className="bg-black/50 border border-white/10 text-xs text-white rounded-lg px-3 py-2 outline-none focus:border-primary-500 transition-colors focus:ring-1 focus:ring-primary-500/50"
-                    >
-                        <option value={512}>512 samples (Low Latency)</option>
-                        <option value={1024}>1024 samples (Balanced)</option>
-                        <option value={2048}>2048 samples (Stable)</option>
-                    </select>
-                </div>
-
-                <div className="p-6 flex items-center justify-between border-b border-white/5 hover:bg-white/5 transition-colors">
-                    <div>
-                        <label htmlFor="audio-device-select" className="text-white text-base font-medium mb-1 cursor-pointer">Audio Output Device</label>
-                        <div className="text-xs text-neutral-500">Select playback hardware.</div>
-                    </div>
-                    <select 
-                        id="audio-device-select"
-                        value={selectedDevice}
-                        onChange={handleDeviceChange}
-                        className="bg-black/50 border border-white/10 text-xs text-white rounded-lg px-3 py-2 outline-none focus:border-primary-500 transition-colors focus:ring-1 focus:ring-primary-500/50 max-w-[200px] truncate"
-                    >
-                        <option value="default">System Default</option>
-                        {audioDevices.map((d, i) => <option key={i} value={d}>{d}</option>)}
-                    </select>
-                </div>
-
-                <div className="p-6 flex flex-col gap-2 hover:bg-white/5 transition-colors border-b border-white/5">
-                    <div className="flex items-center justify-between">
-                        <label htmlFor="crossfade-slider" className="text-white text-base font-medium mb-1 cursor-pointer">Crossfade</label>
-                        <span className="text-xs font-bold bg-white/10 px-2 py-1 rounded text-white">{crossfade === 0 ? '0s (Gapless)' : `${crossfade}s`}</span>
-                    </div>
-                    <div className="text-xs text-neutral-500 mb-2">Smooth transition between tracks.</div>
-                    <input 
-                        id="crossfade-slider"
-                        type="range"
-                        min="0"
-                        max="12"
-                        step="1"
-                        value={crossfade}
-                        onChange={handleCrossfadeChange}
-                        className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-primary-500"
-                    />
-                </div>
-            </fieldset>
-        </section>
-
-        {/* API Section */}
-        <section>
-            <div className="flex items-center gap-2 mb-4 px-1">
-                <div className="w-8 h-8 rounded-full bg-primary-500/20 flex items-center justify-center text-primary-500">
-                    <Shield size={16} />
-                </div>
-                <h3 className="text-sm font-bold text-white uppercase tracking-widest">API Configuration</h3>
-            </div>
-            <fieldset className="glass-panel rounded-3xl p-6 border-transparent">
-                <legend className="sr-only">API Configuration Settings</legend>
-                <div className="mb-4">
-                    <label htmlFor="gemini-api-key" className="block text-xs text-neutral-400 mb-2 uppercase tracking-wider font-bold cursor-pointer">Gemini API Key</label>
-                    <div className="relative">
-                         <input 
-                            id="gemini-api-key"
-                            type="password" 
-                            value={geminiKey}
-                            onChange={handleGeminiChange}
-                            placeholder="Enter Gemini API Key..."
-                            className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-neutral-400 font-mono text-sm tracking-widest focus:border-primary-500 outline-none transition-colors focus:ring-1 focus:ring-primary-500/50"
-                        />
-                    </div>
-                </div>
-                <div className="mb-1">
-                    <label htmlFor="youtube-api-key" className="block text-xs text-neutral-400 mb-2 uppercase tracking-wider font-bold cursor-pointer">YouTube API Key</label>
-                    <div className="relative">
-                         <input 
-                            id="youtube-api-key"
-                            type="password" 
-                            value={youtubeKey}
-                            onChange={handleYoutubeChange}
-                            placeholder="Enter YouTube API Key..."
-                            className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-neutral-400 font-mono text-sm tracking-widest focus:border-primary-500 outline-none transition-colors focus:ring-1 focus:ring-primary-500/50"
-                        />
-                    </div>
-                </div>
-            </fieldset>
-        </section>
-
+    <ScrollArea title="Settings" subtitle="Playback, library and privacy">
+      <div className="px-8 pb-28 max-w-4xl space-y-6">
+        {notice && (
+          <p role="status" className="rounded-xl border border-white/20 p-3">
+            {notice}
+          </p>
+        )}
+        <fieldset className="glass-panel rounded-2xl p-6 space-y-4">
+          <legend>Appearance</legend>
+          <div className="flex gap-3 flex-wrap">
+            {THEMES.map((theme) => (
+              <button
+                key={theme.id}
+                aria-pressed={theme.id === currentThemeId}
+                onClick={() => onThemeChange(theme)}
+                className="border border-white/20 rounded-lg p-3"
+              >
+                {theme.name}
+              </button>
+            ))}
+          </div>
+        </fieldset>
+        <fieldset className="glass-panel rounded-2xl p-6 space-y-5">
+          <legend>Audio output</legend>
+          <button
+            disabled={!nativeInfo?.device_name}
+            onClick={() =>
+              void run(async () => {
+                if (nativeInfo?.device_name) saveDeviceProfile(nativeInfo.device_name, audioState.volume);
+              })
+            }
+          >
+            Save current EQ and volume for this output device
+          </button>
+          <label className="block">
+            Output device
+            <select
+              className="block bg-neutral-900 rounded-lg p-3 mt-2 w-full"
+              aria-label="Output device"
+              value={nativeInfo?.device_name || ''}
+              onChange={(event) => void run(() => invoke('set_output_device', { deviceId: event.target.value || null }))}
+            >
+              <option value="">System default</option>
+              {devices.map((device) => (
+                <option key={device.id} value={device.id}>
+                  {device.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button aria-pressed={isPuristMode} onClick={onTogglePurist} className="border border-white/20 rounded-lg p-3">
+            {isPuristMode ? 'EQ bypassed' : 'Equalizer enabled'}
+          </button>
+          <p className="text-sm text-neutral-400">
+            Actual output: {nativeInfo?.output_sample_rate ? nativeInfo.output_sample_rate / 1000 + ' kHz' : 'Not connected'} ·{' '}
+            {nativeInfo?.output_format || 'Unknown format'}. Audio uses the system mixer.
+          </p>
+          <label className="block">
+            Crossfade: {nativeInfo?.crossfade_seconds || 0} seconds
+            <input
+              className="block w-full mt-2"
+              aria-label="Crossfade seconds"
+              type="range"
+              min="0"
+              max="12"
+              step="1"
+              value={nativeInfo?.crossfade_seconds || 0}
+              onChange={(event) => void run(() => invoke('set_crossfade_duration', { seconds: Number(event.target.value) }))}
+            />
+          </label>
+          <label className="block">
+            Loudness normalization
+            <select
+              className="block bg-neutral-900 rounded-lg p-3 mt-2"
+              value={nativeInfo?.normalization || 'off'}
+              onChange={(event) => void run(() => invoke('set_normalization', { mode: event.target.value, preampDb: 0 }))}
+            >
+              <option value="off">Off</option>
+              <option value="track">Track ReplayGain</option>
+              <option value="album">Album ReplayGain</option>
+            </select>
+          </label>
+          <p className="text-sm text-neutral-400">
+            ReplayGain uses tags embedded in your music. Untagged files retain their original loudness.
+          </p>
+        </fieldset>
+        <fieldset className="glass-panel rounded-2xl p-6 space-y-4">
+          <legend>Library and recovery</legend>
+          <p className="text-sm text-neutral-400">
+            Watched folders are scanned at startup and when music changes. Missing files stay in your playlists and can return when a drive
+            reconnects.
+          </p>
+          <button
+            onClick={() =>
+              void run(async () => {
+                setWatchedFolders(await invoke<string[]>('pick_watched_folder'));
+              })
+            }
+          >
+            Add watched folder
+          </button>
+          <ul className="space-y-2">
+            {watchedFolders.map((folder) => (
+              <li key={folder} className="flex gap-3 items-center">
+                <span className="break-all flex-1">{folder}</span>
+                <button
+                  aria-label={`Stop watching ${folder}`}
+                  onClick={() =>
+                    void run(async () => {
+                      await invoke('remove_watched_folder', { path: folder });
+                      setWatchedFolders(await invoke<string[]>('get_watched_folders'));
+                    })
+                  }
+                >
+                  Remove
+                </button>
+              </li>
+            ))}
+          </ul>
+          <div className="flex gap-4 flex-wrap">
+            <button onClick={() => void run(async () => download('rawh-library.json', await library.exportLibrary()))}>
+              Export library backup
+            </button>
+            <button onClick={() => void run(library.refreshLibrary)}>Rescan library</button>
+            <button onClick={() => void run(async () => download('rawh-diagnostics.json', await invoke<string>('diagnostics_export')))}>
+              Export diagnostics
+            </button>
+          </div>
+          <label className="block">
+            Restore backup
+            <input
+              type="file"
+              accept=".json"
+              className="block mt-2"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file)
+                  void run(async () => {
+                    if (file.size > 64 * 1024 * 1024) throw new Error('Backup exceeds 64 MB');
+                    await library.restoreLibrary(await file.text());
+                    if (window.__TAURI_INTERNALS__) setWatchedFolders(await invoke<string[]>('get_watched_folders'));
+                  });
+                event.target.value = '';
+              }}
+            />
+          </label>
+          <p className="text-sm text-neutral-400">
+            Backups contain metadata, playlists and file paths. Your audio files remain in their original folders. After restoring on
+            another computer, import those folders to grant access.
+          </p>
+        </fieldset>
+        <SoftwareUpdates />
+        {policy && (!policy.allowUpdates || !policy.allowExternalServices || !policy.allowMetadataEdits) && (
+          <p className="rounded-xl border border-white/20 p-3">
+            Administrator policy disables:{' '}
+            {[
+              !policy.allowUpdates && 'self-updates',
+              !policy.allowExternalServices && 'external integrations',
+              !policy.allowMetadataEdits && 'file metadata edits',
+            ]
+              .filter(Boolean)
+              .join(', ')}
+            .
+          </p>
+        )}
+        <LibraryMaintenance />
+        <fieldset className="glass-panel rounded-2xl p-6 space-y-4">
+          <legend>Optional AI insights</legend>
+          <p className="text-sm text-neutral-400">
+            Only pressing the insight button sends a track title and artist to Google. Credentials are held in your operating system
+            credential store.
+          </p>
+          <label className="block">
+            Gemini API key
+            <input
+              className="block bg-neutral-900 rounded-lg p-3 mt-2 w-full"
+              autoComplete="off"
+              type="password"
+              value={geminiKey}
+              onChange={(event) => setGeminiKey(event.target.value)}
+              placeholder={configured ? 'Key saved securely' : 'Enter API key'}
+            />
+          </label>
+          <div className="flex gap-4">
+            <button
+              disabled={!geminiKey}
+              onClick={() =>
+                void run(async () => {
+                  await invoke('credential_set', { service: 'gemini', key: geminiKey });
+                  setGeminiKey('');
+                  setConfigured(true);
+                  localStorage.removeItem('rawh_gemini_api_key');
+                })
+              }
+            >
+              Save key
+            </button>
+            <button
+              onClick={() =>
+                void run(async () => {
+                  await invoke('credential_delete', { service: 'gemini' });
+                  setConfigured(false);
+                  localStorage.removeItem('rawh_gemini_api_key');
+                })
+              }
+            >
+              Delete key
+            </button>
+          </div>
+        </fieldset>
       </div>
     </ScrollArea>
   );
-};
+}

@@ -3,21 +3,19 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
-  define: {
-    'process.env.API_KEY': JSON.stringify(process.env.API_KEY)
-  },
   clearScreen: false,
   server: {
     port: 1420,
     strictPort: true,
     watch: {
-      ignored: ["**/src-tauri/**"],
+      ignored: ['**/src-tauri/**'],
     },
   },
-  envPrefix: ['VITE_', 'TAURI_'],
+  // Signing credentials use TAURI_* and must never become webview environment data.
+  envPrefix: ['VITE_'],
   build: {
-    target: process.env.TAURI_PLATFORM == 'windows' ? 'chrome105' : 'safari13',
-    minify: !process.env.TAURI_DEBUG ? 'esbuild' : false,
-    sourcemap: !!process.env.TAURI_DEBUG,
+    target: process.env.TAURI_ENV_PLATFORM === 'windows' ? 'chrome105' : 'safari15',
+    minify: !process.env.TAURI_ENV_DEBUG,
+    sourcemap: !!process.env.TAURI_ENV_DEBUG,
   },
 });

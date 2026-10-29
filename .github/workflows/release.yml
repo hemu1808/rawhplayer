@@ -5,13 +5,25 @@ on:
     tags: ['v*']
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  validate:
+    uses: ./.github/workflows/ci.yml
   release:
+    needs: validate
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     name: Release (${{ matrix.platform }})
     strategy:
       fail-fast: false
@@ -26,16 +38,22 @@ jobs:
           - platform: ubuntu-latest
             target: x86_64-unknown-linux-gnu
     runs-on: ${{ matrix.platform }}
+    env:
+      RELEASE_TARGET: ${{ matrix.target }}
+      TAURI_SIGNING_PUBLIC_KEY: ${{ vars.TAURI_SIGNING_PUBLIC_KEY }}
+      APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+      APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: 1.99.1
           targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
@@ -46,9 +64,32 @@ jobs:
         if: matrix.platform == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev libdbus-1-dev
 
       - run: npm ci
+
+      - name: Generate dependency and license inventories
+        run: |
+          cargo install cargo-cyclonedx --version 0.5.9 --locked
+          npm run release:inventory
+
+      - name: Import Windows publisher certificate
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: ./scripts/import-windows-certificate.ps1
+
+      - name: Validate release version and signing configuration
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+        run: node scripts/release-config.mjs
 
       - name: Build & Release
         uses: tauri-apps/tauri-action@v0
@@ -56,10 +97,40 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'Rawh Player ${{ github.ref_name }}'
           releaseBody: 'See the [CHANGELOG](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.'
           releaseDraft: true
           prerelease: false
-          args: --target ${{ matrix.target }}
+          includeUpdaterJson: true
+          updaterJsonPreferNsis: true
+          args: --target ${{ matrix.target }} --config src-tauri/tauri.release.conf.json
+
+      - name: Generate release checksums
+        run: node scripts/release-checksums.mjs
+
+      - name: Attest release artifacts
+        if: github.event.repository.private == false
+        uses: actions/attest@v4
+        with:
+          subject-checksums: release-artifacts/SHA256SUMS-${{ matrix.target }}.txt
+
+      - name: Attach inventories and checksums to draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" release-artifacts/* --clobber
+
+      - name: Remove Windows publisher certificate
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if ($env:WINDOWS_CERTIFICATE_THUMBPRINT -match '^[A-Fa-f0-9]{40}$') {
+            $certificatePath = 'Cert:\CurrentUser\My\' + $env:WINDOWS_CERTIFICATE_THUMBPRINT
+            if (Test-Path -LiteralPath $certificatePath) { Remove-Item -LiteralPath $certificatePath }
+          }

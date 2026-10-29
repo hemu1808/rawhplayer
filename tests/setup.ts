@@ -13,7 +13,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 // Mock jsmediatags
 vi.mock('jsmediatags/dist/jsmediatags.min.js', () => ({
   default: {
-    read: vi.fn((_file: any, callbacks: any) => {
+    read: vi.fn((_file: unknown, callbacks: { onSuccess: (result: { tags: Record<string, unknown> }) => void }) => {
       callbacks.onSuccess({ tags: {} });
     }),
   },

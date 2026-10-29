@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { usePersistence } from '../hooks/usePersistence';
 
@@ -31,7 +31,7 @@ describe('usePersistence', () => {
     const defaultObj = { volume: 1.0, muted: false };
     const { result } = renderHook(() => usePersistence('test_obj', defaultObj));
     expect(result.current[0]).toEqual(defaultObj);
-    
+
     act(() => {
       result.current[1]({ volume: 0.5, muted: true });
     });

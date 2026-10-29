@@ -4,8 +4,7 @@ import React from 'react';
 import { PlayerProvider, usePlayer } from '../context/PlayerContext';
 
 // Wrapper for hooks that need context
-const wrapper = ({ children }: { children: React.ReactNode }) =>
-  React.createElement(PlayerProvider, null, children);
+const wrapper = ({ children }: { children: React.ReactNode }) => React.createElement(PlayerProvider, null, children);
 
 describe('PlayerContext', () => {
   beforeEach(() => {

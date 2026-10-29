@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 
 export function usePersistence<T>(key: string, initialValue: T): [T, (value: T | ((val: T) => T)) => void] {
   const [state, setState] = useState<T>(() => {

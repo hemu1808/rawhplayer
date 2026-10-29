@@ -1,13 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  Track,
-  AudioState,
-  PlaybackMode,
-  DEFAULT_EQ_BANDS,
-  EQ_PRESETS,
-  THEMES,
-  EqualizerBand,
-} from '../types';
+import { Track, AudioState, PlaybackMode, DEFAULT_EQ_BANDS, EQ_PRESETS, THEMES, EqualizerBand } from '../types';
 
 describe('Types & Constants', () => {
   describe('DEFAULT_EQ_BANDS', () => {
@@ -39,7 +31,7 @@ describe('Types & Constants', () => {
     });
 
     it('should include Manual preset with flat response', () => {
-      const manual = EQ_PRESETS.find(p => p.id === 'manual');
+      const manual = EQ_PRESETS.find((p) => p.id === 'manual');
       expect(manual).toBeDefined();
       manual!.bands.forEach((band: EqualizerBand) => {
         expect(band.gain).toBe(0);
@@ -47,18 +39,18 @@ describe('Types & Constants', () => {
     });
 
     it('each preset should have exactly 10 bands', () => {
-      EQ_PRESETS.forEach(preset => {
+      EQ_PRESETS.forEach((preset) => {
         expect(preset.bands).toHaveLength(10);
       });
     });
 
     it('each preset should have unique id', () => {
-      const ids = EQ_PRESETS.map(p => p.id);
+      const ids = EQ_PRESETS.map((p) => p.id);
       expect(new Set(ids).size).toBe(ids.length);
     });
 
     it('no preset band gain should exceed ±12dB', () => {
-      EQ_PRESETS.forEach(preset => {
+      EQ_PRESETS.forEach((preset) => {
         preset.bands.forEach((band: EqualizerBand) => {
           expect(band.gain).toBeGreaterThanOrEqual(-12);
           expect(band.gain).toBeLessThanOrEqual(12);
@@ -73,7 +65,7 @@ describe('Types & Constants', () => {
     });
 
     it('each theme should have all 5 color stops', () => {
-      THEMES.forEach(theme => {
+      THEMES.forEach((theme) => {
         expect(theme.colors).toHaveProperty('300');
         expect(theme.colors).toHaveProperty('400');
         expect(theme.colors).toHaveProperty('500');
@@ -84,15 +76,15 @@ describe('Types & Constants', () => {
 
     it('each color should be a valid hex string', () => {
       const hexRegex = /^#[0-9a-fA-F]{6}$/;
-      THEMES.forEach(theme => {
-        Object.values(theme.colors).forEach(color => {
+      THEMES.forEach((theme) => {
+        Object.values(theme.colors).forEach((color) => {
           expect(color).toMatch(hexRegex);
         });
       });
     });
 
     it('each theme should have unique id', () => {
-      const ids = THEMES.map(t => t.id);
+      const ids = THEMES.map((t) => t.id);
       expect(new Set(ids).size).toBe(ids.length);
     });
   });

@@ -1,0 +1,11 @@
+node_modules
+dist
+src-tauri/target
+src-tauri/gen
+package-lock.json
+coverage
+playwright-report
+test-results
+release-artifacts
+src-tauri/release-bom.json
+*.docx

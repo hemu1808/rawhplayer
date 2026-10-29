@@ -8,12 +8,31 @@ export interface StatsData {
 }
 
 const STATS_KEY = 'rawh_stats';
+let cached: StatsData | null = null;
+let flushTimer: ReturnType<typeof setTimeout> | undefined;
+
+export const flushStats = () => {
+  if (flushTimer) clearTimeout(flushTimer);
+  flushTimer = undefined;
+  if (cached) {
+    try {
+      localStorage.setItem(STATS_KEY, JSON.stringify(cached));
+    } catch {
+      /* A full browser store must not interrupt playback. */
+    }
+  }
+};
 
 const loadStats = (): StatsData => {
+  if (cached) return cached;
   const data = localStorage.getItem(STATS_KEY);
   if (data) {
     try {
-      return JSON.parse(data);
+      const parsed = JSON.parse(data) as StatsData;
+      if (parsed && typeof parsed.tracks === 'object' && parsed.tracks !== null) {
+        cached = parsed;
+        return cached;
+      }
     } catch (e) {
       console.error('Failed to parse stats', e);
     }
@@ -22,7 +41,8 @@ const loadStats = (): StatsData => {
 };
 
 const saveStats = (stats: StatsData) => {
-  localStorage.setItem(STATS_KEY, JSON.stringify(stats));
+  cached = stats;
+  if (!flushTimer) flushTimer = setTimeout(flushStats, 5000);
 };
 
 export const recordPlay = (trackId: string) => {

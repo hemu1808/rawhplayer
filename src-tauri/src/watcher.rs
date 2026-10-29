@@ -1,108 +1,186 @@
+//! A bounded wake channel coalesces filesystem bursts into native library scans.
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
-use parking_lot::Mutex;
-use std::collections::HashSet;
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::thread;
+use std::{
+    collections::HashSet,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, SyncSender},
+        Arc,
+    },
+    time::{Duration, Instant},
+};
 use tauri::{AppHandle, Emitter, Manager};
 
-pub struct FolderWatcherState {
-    watcher: Option<RecommendedWatcher>,
-    watched_folders: HashSet<String>,
-    app_handle: Option<AppHandle>,
-}
-
 pub struct FolderWatcher {
-    pub state: Arc<Mutex<FolderWatcherState>>,
+    wake: SyncSender<()>,
+    stop: Arc<AtomicBool>,
 }
 
 impl FolderWatcher {
-    pub fn new() -> Self {
-        Self {
-            state: Arc::new(Mutex::new(FolderWatcherState {
-                watcher: None,
-                watched_folders: HashSet::new(),
-                app_handle: None,
-            })),
-        }
-    }
-}
-
-pub fn start_folder_watch(path: String, app_handle: AppHandle) -> Result<(), String> {
-    let watcher_state = app_handle.state::<FolderWatcher>();
-    let mut state = watcher_state.state.lock();
-
-    state.app_handle = Some(app_handle.clone());
-    
-    if state.watcher.is_none() {
-        let app_handle_clone = app_handle.clone();
-        let (tx, rx) = std::sync::mpsc::channel();
-
-        let watcher = notify::RecommendedWatcher::new(
-            tx,
+    pub fn new(app: AppHandle) -> Result<Self, String> {
+        let (wake, events) = mpsc::sync_channel(1);
+        let signal = wake.clone();
+        let dirty = Arc::new(AtomicBool::new(true));
+        let changed = dirty.clone();
+        let watcher = RecommendedWatcher::new(
+            move |event: notify::Result<notify::Event>| {
+                // Read/access events are caused by our own scan and must not retrigger it.
+                if event
+                    .as_ref()
+                    .map(|event| {
+                        !event.kind.is_access()
+                            && event.paths.iter().any(|path| {
+                                path.is_dir()
+                                    || path.extension().is_none()
+                                    || path
+                                        .extension()
+                                        .and_then(|ext| ext.to_str())
+                                        .map(|ext| {
+                                            [
+                                                "mp3", "flac", "wav", "ogg", "aac", "m4a", "aiff",
+                                                "aif", "opus",
+                                            ]
+                                            .contains(&ext.to_ascii_lowercase().as_str())
+                                        })
+                                        .unwrap_or(false)
+                            })
+                    })
+                    .unwrap_or(true)
+                {
+                    changed.store(true, Ordering::Release);
+                    let _ = signal.try_send(());
+                }
+            },
             Config::default(),
         )
-        .map_err(|e| format!("Failed to create watcher: {}", e))?;
-
-        state.watcher = Some(watcher);
-
-        thread::spawn(move || {
-            for res in rx {
-                match res {
-                    Ok(event) => {
-                        if event.kind.is_create() || event.kind.is_modify() {
-                            for path in event.paths {
-                                if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
-                                    let ext_lower = ext.to_lowercase();
-                                    if ["mp3", "flac", "wav", "ogg", "aac", "m4a", "aiff"].contains(&ext_lower.as_str()) {
-                                        let _ = app_handle_clone.emit("new_file_detected", path.to_string_lossy().to_string());
-                                    }
+        .map_err(|e| format!("Cannot initialize folder watching: {e}"))?;
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopped = stop.clone();
+        std::thread::Builder::new().name("rawh-library-watch".into()).spawn(move || {
+            let mut watcher = watcher;
+            let mut active = HashSet::<String>::new();
+            let mut failed = HashSet::<String>::new();
+            let mut last_sync = Instant::now() - Duration::from_secs(5);
+            while !stopped.load(Ordering::Acquire) {
+                let _ = events.recv_timeout(Duration::from_secs(2));
+                if stopped.load(Ordering::Acquire) { break; }
+                let library = app.state::<crate::library::NativeLibrary>();
+                if last_sync.elapsed() >= Duration::from_secs(2) || dirty.load(Ordering::Acquire) {
+                    last_sync = Instant::now();
+                    let desired = match library.watched_folders() {
+                        Ok(folders) => folders.into_iter().collect::<HashSet<_>>(),
+                        Err(error) => { let _ = app.emit("library_error", error); continue; }
+                    };
+                    for path in active.clone() {
+                        if !desired.contains(&path) || !std::path::Path::new(&path).is_dir() {
+                            let _ = watcher.unwatch(std::path::Path::new(&path));
+                            active.remove(&path);
+                            dirty.store(true, Ordering::Release);
+                        }
+                    }
+                    failed.retain(|path| desired.contains(path));
+                    for path in desired.difference(&active) {
+                        let result = library.authorize_path(path).and_then(|canonical| {
+                            watcher.watch(&canonical, RecursiveMode::Recursive).map_err(|e| e.to_string())
+                        });
+                        match result {
+                            Ok(()) => {
+                                failed.remove(path);
+                                dirty.store(true, Ordering::Release);
+                            }
+                            Err(_) => {
+                                if failed.insert(path.clone()) {
+                                    let _ = app.emit("library_error", "A watched folder is unavailable. It will be retried automatically.");
+                                    dirty.store(true, Ordering::Release);
                                 }
                             }
                         }
                     }
-                    Err(e) => log::error!("watch error: {:?}", e),
+                    active = desired.into_iter().filter(|path| !failed.contains(path)).collect();
+                }
+                if !dirty.swap(false, Ordering::AcqRel) { continue; }
+                // Quiet-period debounce with a maximum delay under continuous writes.
+                let burst = Instant::now();
+                while burst.elapsed() < Duration::from_secs(2) {
+                    if events.recv_timeout(Duration::from_millis(300)).is_err() { break; }
+                }
+                if stopped.load(Ordering::Acquire) { break; }
+                // Clear before scanning: changes during the scan schedule another pass.
+                dirty.store(false, Ordering::Release);
+                match library.reconcile(|progress| { let _ = app.emit("library_scan_progress", progress); }) {
+                    Ok(snapshot) => { let _ = app.emit("library_changed", snapshot); }
+                    Err(error) => {
+                        // A picker/manual scan may already hold the scan lock. Retry
+                        // once the worker wakes, without losing the filesystem change.
+                        dirty.store(true, Ordering::Release);
+                        let _ = app.emit("library_error", error);
+                    }
                 }
             }
-        });
+        }).map_err(|e| e.to_string())?;
+        Ok(Self { wake, stop })
     }
 
-    if let Some(watcher) = &mut state.watcher {
-        watcher
-            .watch(std::path::Path::new(&path), RecursiveMode::Recursive)
-            .map_err(|e| format!("Failed to watch path: {}", e))?;
-        state.watched_folders.insert(path);
+    fn refresh(&self) {
+        let _ = self.wake.try_send(());
     }
-
-    Ok(())
 }
 
-pub fn stop_folder_watch(app_handle: AppHandle) -> Result<(), String> {
-    let watcher_state = app_handle.state::<FolderWatcher>();
-    let mut state = watcher_state.state.lock();
-
-    if let Some(mut watcher) = state.watcher.take() {
-        for folder in &state.watched_folders {
-            let _ = watcher.unwatch(std::path::Path::new(folder));
-        }
+impl Drop for FolderWatcher {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        self.refresh();
     }
-    state.watched_folders.clear();
-    Ok(())
 }
 
 #[tauri::command]
 pub fn start_watching(path: String, app_handle: AppHandle) -> Result<(), String> {
-    start_folder_watch(path, app_handle)
+    app_handle
+        .state::<crate::library::NativeLibrary>()
+        .add_watched_folder(&path)?;
+    app_handle.state::<FolderWatcher>().refresh();
+    Ok(())
 }
 
 #[tauri::command]
 pub fn stop_watching(app_handle: AppHandle) -> Result<(), String> {
-    stop_folder_watch(app_handle)
+    app_handle
+        .state::<crate::library::NativeLibrary>()
+        .clear_watched_folders()?;
+    app_handle.state::<FolderWatcher>().refresh();
+    Ok(())
+}
+
+#[tauri::command]
+pub fn remove_watched_folder(path: String, app_handle: AppHandle) -> Result<(), String> {
+    app_handle
+        .state::<crate::library::NativeLibrary>()
+        .remove_watched_folder(&path)?;
+    app_handle.state::<FolderWatcher>().refresh();
+    Ok(())
 }
 
 #[tauri::command]
 pub fn get_watched_folders(app_handle: AppHandle) -> Result<Vec<String>, String> {
-    let watcher_state = app_handle.state::<FolderWatcher>();
-    let state = watcher_state.state.lock();
-    Ok(state.watched_folders.iter().cloned().collect())
+    app_handle
+        .state::<crate::library::NativeLibrary>()
+        .watched_folders()
+}
+
+#[tauri::command]
+pub async fn pick_watched_folder(app: AppHandle) -> Result<Vec<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    tauri::async_runtime::spawn_blocking(move || {
+        let library = app.state::<crate::library::NativeLibrary>();
+        if let Some(selected) = app.dialog().file().blocking_pick_folder() {
+            let path = selected.into_path().map_err(|e| e.to_string())?;
+            let path = path.to_string_lossy().into_owned();
+            library.authorize_paths(std::slice::from_ref(&path))?;
+            library.add_watched_folder(&path)?;
+            app.state::<FolderWatcher>().refresh();
+        }
+        library.watched_folders()
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }

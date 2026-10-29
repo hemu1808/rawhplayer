@@ -1,4 +1,4 @@
 declare module 'jsmediatags/dist/jsmediatags.min.js' {
-  const jsmediatags: any;
+  const jsmediatags: unknown;
   export default jsmediatags;
 }

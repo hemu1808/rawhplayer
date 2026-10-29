@@ -14,17 +14,28 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "lint": "eslint . --ext .ts,.tsx",
-    "format": "prettier --write \"**/*.{ts,tsx,css,json,md}\""
+    "lint": "eslint . --max-warnings 0",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test:e2e": "playwright test",
+    "test:release": "node --test scripts/*.test.mjs",
+    "release:inventory": "node scripts/release-inventory.mjs",
+    "check": "npm run typecheck && npm run lint && npm test && npm run test:release && npm run build"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.9.1",
+    "@fontsource-variable/dm-sans": "^5.2.8",
+    "@fontsource/michroma": "^5.2.7",
+    "@tauri-apps/api": "~2.12.4",
+    "@tauri-apps/plugin-updater": "~2.14.1",
     "jsmediatags": "^3.9.5",
-    "lucide-react": "^0.344.0",
+    "lucide-react": "^1.62.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.0",
+    "@playwright/test": "^1.56.0",
     "@tauri-apps/cli": "^2.11.2",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^7.0.1",
@@ -33,13 +44,19 @@
     "@types/node": "^26.2.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "@vitejs/plugin-react": "^4.2.1",
+    "@vitejs/plugin-react": "^6.1.2",
+    "@vitest/coverage-v8": "^5.0.5",
     "autoprefixer": "^10.4.18",
+    "eslint": "^9.39.0",
+    "eslint-plugin-react-hooks": "^7.0.0",
+    "eslint-plugin-unused-imports": "^4.4.1",
     "jsdom": "^29.1.1",
     "postcss": "^8.4.35",
+    "prettier": "^3.6.2",
     "tailwindcss": "^3.4.1",
     "typescript": "^5.2.2",
-    "vite": "^5.2.0",
-    "vitest": "^4.1.10"
+    "typescript-eslint": "^8.72.1",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
   }
 }

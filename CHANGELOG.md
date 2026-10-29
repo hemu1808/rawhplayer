@@ -5,9 +5,31 @@ All notable changes to Rawh Player will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Dedicated native decoding/output worker, gapless transitions, seeking, crossfade, ReplayGain and measured signal-path details.
+- SQLite library, separate queue and saved playlists, editable smart filters, watched-folder reconciliation and migration of legacy metadata.
+- Missing-file repair, duplicate review, metadata editing with byte-preserving undo, library backup/restore, cached artwork/waveforms and local lyrics.
+- Per-device EQ/volume profiles, explainable queue suggestions, compact/tray controls, command palette and native file-open/single-instance integration.
+- OS credential storage, scoped native file grants, administrator policy, redacted diagnostics, signed-update controls and release configuration checks.
+- Reproducible frontend/native/browser checks, dependency auditing, SBOM/license inventories, checksums and release provenance configuration.
+
+### Fixed
+
+- Search selection, queue removal/clearing, stale playback events, device contracts, invalid native input and transient artwork persistence.
+- Compatible dependency updates resolve the reported npm vulnerabilities and Rust vulnerability errors; upstream warnings remain documented in the release runbook.
+
+### Release status
+
+- These changes do not publish a release. Publisher/updater signing, installed-app recovery and real-device validation remain release gates.
+- The historical inventory below included prototypes. Current shipped scope is described in README.md; provider streaming, VST, room correction, spatial audio and cloud sync are not implemented launch features.
+
 ## [3.0.0] - 2026-08-11
 
 ### Added
+
 - **Enterprise Architecture**: Complete refactoring from monolithic App.tsx to React Context + custom hooks architecture
 - **Gapless Playback**: Pre-buffered track transitions via Rodio sink queue for seamless album listening
 - **Audio Device Selection**: Enumerate and display available output devices via CPAL
@@ -41,6 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Privacy Policy**: Template for Gemini API data disclosure
 
 ### Changed
+
 - **Architecture**: App.tsx refactored from 719 lines to ~150 lines using Context providers
 - **State Management**: 15+ useState hooks replaced with useReducer in PlayerContext/LibraryContext
 - **EQ Performance**: Coefficient checks batched per-256-samples instead of per-sample
@@ -50,6 +73,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Bitrate Display**: Accurate calculation from file size and duration
 
 ### Fixed
+
 - **Stale Closure**: Keyboard shortcut arrow keys now use refs for current playback position
 - **Version Mismatch**: package.json, tauri.conf.json, Cargo.toml all synced to 3.0.0
 - **Dev Port**: Vite and Tauri dev server ports aligned to 1420
@@ -62,6 +86,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.1.0] - 2026-06-17
 
 ### Fixed
+
 - 194 issues across 6 phases (Critical, High, Medium, Low, Accessibility)
 - Fabricated VU meter data replaced with real L/R channel analysis
 - Fabricated goniometer replaced with true stereo phase correlation
@@ -70,6 +95,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - All accessibility issues resolved (WCAG 2.1 AA)
 
 ### Added
+
 - Native 10-band Biquad IIR parametric equalizer in Rust
 - Real-time FFT spectral analysis at 30fps
 - Code splitting via React.lazy for all pages
@@ -79,6 +105,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.0] - 2026-06-01
 
 ### Added
+
 - Initial release with React + Tauri audio player
 - Basic playback controls, file import, visualizations
 - YouTube search, AI track insights, theme engine

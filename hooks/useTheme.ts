@@ -6,13 +6,14 @@ export function useTheme() {
   const [currentThemeId, setCurrentThemeId] = usePersistence<string>('rawh_theme_id', 'reference');
 
   useEffect(() => {
-    const theme = THEMES.find(t => t.id === currentThemeId) || THEMES.find(t => t.id === 'reference');
+    const theme = THEMES.find((t) => t.id === currentThemeId) || THEMES.find((t) => t.id === 'reference');
     if (theme) {
       document.documentElement.style.setProperty('--primary-300', theme.colors[300]);
       document.documentElement.style.setProperty('--primary-400', theme.colors[400]);
       document.documentElement.style.setProperty('--primary-500', theme.colors[500]);
       document.documentElement.style.setProperty('--primary-600', theme.colors[600]);
       document.documentElement.style.setProperty('--primary-900', theme.colors[900]);
+      window.dispatchEvent(new Event('rawh-theme-changed'));
     }
   }, [currentThemeId]);
 

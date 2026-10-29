@@ -1,67 +1,85 @@
-import React, { useState, useEffect } from 'react';
-import { Track } from '../types';
-import { X, Music } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import type { Track } from '../types';
 
-interface LyricsPanelProps {
+export function LyricsPanel({
+  track,
+  isOpen,
+  onClose,
+  currentTime = 0,
+}: {
   track: Track | null;
   isOpen: boolean;
   onClose: () => void;
-}
-
-export const LyricsPanel: React.FC<LyricsPanelProps> = ({ track, isOpen, onClose }) => {
-  const [lyrics, setLyrics] = useState<string>('');
-  const [loading, setLoading] = useState<boolean>(false);
-  const [error, setError] = useState<boolean>(false);
-
+  currentTime?: number;
+}) {
+  const [lyrics, setLyrics] = useState('');
+  const [status, setStatus] = useState('');
+  const id = track?.id;
   useEffect(() => {
-    if (!isOpen || !track) return;
-    
-    let isMounted = true;
-    const fetchLyrics = async () => {
-      setLoading(true);
-      setError(false);
-      setLyrics('');
-      try {
-        const response = await fetch(`https://api.lyrics.ovh/v1/${encodeURIComponent(track.artist)}/${encodeURIComponent(track.name)}`);
-        if (!response.ok) throw new Error('Not found');
-        const data = await response.json();
-        if (isMounted) {
-          setLyrics(data.lyrics || 'Lyrics not found');
+    if (!isOpen || !id) return;
+    let active = true;
+    setLyrics('');
+    setStatus('Reading local lyrics…');
+    invoke<string | null>('library_read_lyrics', { trackId: id })
+      .then((text) => {
+        if (active) {
+          setLyrics(text || '');
+          setStatus(text ? '' : 'Place an LRC or TXT file next to your music file with the same name.');
         }
-      } catch (err) {
-        if (isMounted) {
-          setError(true);
-        }
-      } finally {
-        if (isMounted) {
-          setLoading(false);
-        }
-      }
-    };
-    
-    fetchLyrics();
-    
+      })
+      .catch(() => {
+        if (active) setStatus('Local lyrics are unavailable.');
+      });
     return () => {
-      isMounted = false;
+      active = false;
     };
-  }, [track, isOpen]);
-
-  if (!isOpen) return null;
-
-  return (
-    <div className="absolute inset-y-0 right-0 w-80 bg-black/40 backdrop-blur-2xl border-l border-white/10 p-6 flex flex-col z-40 transition-transform shadow-2xl">
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-xl font-bold flex items-center gap-2"><Music size={20} /> Lyrics</h2>
-        <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors"><X size={20} /></button>
-      </div>
-      
-      <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-4">
-        {loading && <div className="animate-pulse text-white/50 text-center mt-10">Loading lyrics...</div>}
-        {error && !loading && <div className="text-white/50 text-center mt-10">Lyrics not found</div>}
-        {!loading && !error && lyrics && (
-          <div className="whitespace-pre-wrap text-white/80 font-medium leading-relaxed">{lyrics}</div>
-        )}
-      </div>
-    </div>
+  }, [id, isOpen]);
+  const lines = useMemo(
+    () =>
+      lyrics
+        .split(/\r?\n/)
+        .flatMap((line) => {
+          const tags = [...line.matchAll(/\[(\d+):(\d+(?:\.\d+)?)\]/g)];
+          return tags.map((tag) => ({ time: Number(tag[1]) * 60 + Number(tag[2]), text: line.replace(/\[[^\]]*\]/g, '').trim() }));
+        })
+        .sort((a, b) => a.time - b.time),
+    [lyrics],
   );
-};
+  if (!isOpen) return null;
+  return (
+    <aside
+      aria-label="Local lyrics"
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') onClose();
+      }}
+      className="absolute inset-y-0 right-0 w-80 z-40 bg-neutral-950 border-l border-white/10 p-5 overflow-auto"
+    >
+      <div className="flex justify-between mb-5">
+        <h2>Lyrics</h2>
+        <button onClick={onClose}>Close</button>
+      </div>
+      {status && (
+        <p role="status" className="text-neutral-400">
+          {status}
+        </p>
+      )}
+      {lines.length ? (
+        lines.map((line, index) => (
+          <p
+            key={index}
+            className={
+              line.time <= currentTime && (!lines[index + 1] || lines[index + 1].time > currentTime)
+                ? 'text-primary-300 font-semibold my-4'
+                : 'text-neutral-400 my-4'
+            }
+          >
+            {line.text}
+          </p>
+        ))
+      ) : (
+        <p className="whitespace-pre-wrap">{lyrics}</p>
+      )}
+    </aside>
+  );
+}

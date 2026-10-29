@@ -1,62 +1,33 @@
-# Privacy Policy — Rawh Player
+# RawhPlayer privacy information
 
-**Last Updated**: August 11, 2026
+Updated October 28, 2026. This describes the implementation branch; deployed releases may differ.
 
-## Overview
+## Local data
 
-Rawh Player is a desktop audio player. We are committed to protecting your privacy. This policy explains what data Rawh Player collects, processes, and transmits.
+The native app stores music metadata, absolute file paths, favorites, play counts, listening time, queues, playlists, watched-folder settings and selected-path grants in SQLite. Artwork, waveform data and metadata-edit recovery copies are stored in the application's data directory. Audio remains in its original location unless you explicitly edit its metadata.
 
-## Data We Collect
+Theme, playback preferences, EQ/volume profiles keyed by output-device name and some listening statistics use webview localStorage. Local queue suggestions use favorites, play counts, artist and genre without a network request. The previous browser library is retained after migration for recovery. Clearing localStorage does not delete the native database or credentials.
 
-### Local Data (Stored on Your Device Only)
-- **Music library metadata**: Track names, artists, albums, file paths, play counts, and favorites
-- **User preferences**: Theme, equalizer settings, volume, playback mode
-- **Listening statistics**: Play counts and listening time (stored locally only)
+Integration keys use the operating system credential store. The webview can save/delete a key and query its presence, but cannot retrieve a stored key through the app's IPC commands. Saving or deleting the Gemini key also removes the old localStorage key.
 
-This data is stored in your browser's localStorage and **never leaves your device** unless you explicitly use the features described below.
+## Network access
 
-## Data Transmitted to Third Parties
+Pressing the optional Gemini insight button sends the track title and artist, together with your API key, to Google. No audio is uploaded for this feature. Google's privacy terms apply.
 
-### Google Gemini AI (Optional)
-When you click the "AI Track Insight" button, Rawh Player sends the **track name and artist name** to Google's Gemini API to generate a description of the song.
+Provider playback is absent from navigation. A native YouTube metadata-search command remains; invoking it sends a query and configured key to Google. It does not provide playable media.
 
-- **Data sent**: Song title, artist name
-- **Data received**: AI-generated text description
-- **When**: Only when you explicitly click the insight button
-- **API Key**: You provide your own Google API key; Rawh Player does not store or transmit your key to any server other than Google's
+Remote artwork URLs in restored metadata can contact their hosts when displayed. Imported local artwork is cached on-device. Fonts are bundled and lyrics use local LRC/TXT files.
 
-For Google's privacy practices, see: [Google Privacy Policy](https://policies.google.com/privacy)
+In signed release builds, Check for updates contacts the configured GitHub endpoint. Downloads may contact GitHub's asset-delivery hosts. Those hosts receive ordinary connection information, including your IP address. Updates are not checked or installed automatically. Administrators can disable the updater at process launch with `RAWH_DISABLE_UPDATES=1`.
 
-### YouTube Data API (Optional)
-When you search for music on YouTube within Rawh Player, your search query is sent to the YouTube Data API.
+No analytics, advertising, account service or automatic diagnostic upload is implemented.
 
-- **Data sent**: Search query text
-- **Data received**: Video titles, thumbnails, and IDs
-- **When**: Only when you explicitly perform a YouTube search
-- **API Key**: You provide your own YouTube API key
+## Export and deletion
 
-### AcoustID / MusicBrainz (Optional, Future)
-Audio fingerprinting features (when implemented) will send audio fingerprint data to AcoustID for track identification.
+Library backups contain paths and listening metadata. Diagnostics contain app version, OS, architecture, output format, underrun/clipping counts, normalization mode and administrator policy. They omit track paths, device names, arbitrary error text and credentials. Diagnostics are exported only on request and are not automatically uploaded.
 
-## Data We Do NOT Collect
-- ❌ No analytics or telemetry
-- ❌ No user accounts or registration
-- ❌ No audio file content transmitted
-- ❌ No personal information collected
-- ❌ No cookies or tracking
-- ❌ No advertising
+Removing a library track does not delete its audio. Removing a watched folder stops monitoring but does not delete tracks or revoke earlier path grants. Metadata edits retain recovery copies. Uninstallers may leave application data and credential-store entries behind. Use Delete key in Settings to remove an integration credential.
 
-## Data Storage
-All user data is stored locally on your device. Rawh Player does not operate any cloud servers or databases.
+To remove local data, close the player and remove its application-data directory and webview storage after backing up wanted playlists. Credential-store entries require separate removal. Do not remove your music folders.
 
-## Your Rights
-Since all data is stored locally, you have full control:
-- **Delete**: Clear localStorage in your browser/app to remove all stored data
-- **Export**: Your music files remain unchanged on your filesystem
-- **Portability**: Uninstalling the app removes all stored preferences
-
-## Changes to This Policy
-We may update this privacy policy. Changes will be noted in the CHANGELOG and the "Last Updated" date above.
-
-## Contact
-For privacy questions, please open an issue on our GitHub repository.
+Privacy questions can be filed in the project's GitHub issue tracker. Avoid posting private paths, API keys or library exports publicly.

@@ -10,9 +10,7 @@ export const VERSION = '3.0.0';
 export const APP_IDENTIFIER = 'com.rawhplayer.app';
 
 /** Supported audio file extensions (must match Rust backend whitelist) */
-export const SUPPORTED_EXTENSIONS = [
-  'mp3', 'flac', 'wav', 'ogg', 'aac', 'm4a', 'aiff', 'dsf', 'dff',
-] as const;
+export const SUPPORTED_EXTENSIONS = ['mp3', 'flac', 'wav', 'ogg', 'aac', 'm4a', 'aiff', 'dsf', 'dff'] as const;
 
 /** Default audio engine settings */
 export const DEFAULT_SETTINGS = {
@@ -62,15 +60,23 @@ export const STORAGE_KEYS = {
 
 /** Radio station genres */
 export const RADIO_GENRES = [
-  'All', 'Ambient', 'Classical', 'Electronic', 'Jazz', 'Lounge',
-  'Metal', 'Pop', 'Rock', 'World',
+  'All',
+  'Ambient',
+  'Classical',
+  'Electronic',
+  'Jazz',
+  'Lounge',
+  'Metal',
+  'Pop',
+  'Rock',
+  'World',
 ] as const;
 
 /** Feature flags for Tier 3 stubs */
 export const FEATURE_FLAGS = {
-  spatialAudio: false,    // v4 — HRTF binaural processing
-  aiDjMode: false,        // v4 — Gemini-powered sequencing
-  vstHost: false,         // v4 — VST3 plugin hosting
+  spatialAudio: false, // v4 — HRTF binaural processing
+  aiDjMode: false, // v4 — Gemini-powered sequencing
+  vstHost: false, // v4 — VST3 plugin hosting
   mobileCompanion: false, // v4 — Remote control app
-  roomCorrection: false,  // v4 — Mic-based room measurement
+  roomCorrection: false, // v4 — Mic-based room measurement
 } as const;

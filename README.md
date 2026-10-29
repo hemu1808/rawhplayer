@@ -1,105 +1,46 @@
-# 🎧 Rawh Player — Enterprise-Grade Pro Audio Desktop Application
+# RawhPlayer
 
-Rawh Player is a high-fidelity, production-ready desktop audio player designed for audiophiles. Built on **Tauri v2**, **Rust**, and **React 19**, it decouples the native pro-audio playback pipeline from the user interface to guarantee bit-accurate decoding, ultra-low latency, and phase-accurate real-time spectral analysis.
+RawhPlayer is a local desktop music player built with Tauri 2, Rust, React and TypeScript. This branch is undergoing launch hardening. See [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) for verified behavior and remaining launch gates.
 
----
+## Implemented
 
-## 🏛️ System Architecture Design
+- Native Symphonia decoding and CPAL output on a dedicated worker, with a bounded output queue, seeking, volume, playback speed, equalizer bypass, gapless transitions, crossfade and tagged ReplayGain.
+- SQLite library, separate playback queue, favorites, saved playlists and editable smart playlists. Queue removal preserves library records. Missing-file repair preserves track identities; duplicate review removes library entries without deleting audio.
+- Native file/folder import and drops, scoped file access, watched folders with startup scans and rename/delete/reconnect reconciliation. File associations import the chosen audio and play it in the existing player; launch requests wait until the library is ready.
+- Local lyrics, artwork, waveform cache and signal-path details. Source and output formats are reported separately.
+- Library export/restore and one-time migration of legacy localStorage metadata. Re-import folders to reconnect migrated or restored files.
+- Optional Gemini track insights with OS credential storage.
+- On-demand signed-update controls. Development builds have no updater endpoint; release configuration requires signing credentials.
+- Per-device EQ and volume profiles, compact window and tray controls, and a keyboard command palette (Ctrl/Cmd+K).
+- Explainable local queue suggestions using favorites, listening history and artist/genre matches. Suggestions exclude queued and missing files and only enqueue after selection.
+- Administrator policy for updates, optional integrations and file metadata edits; redacted diagnostics and release dependency inventories.
 
-The application utilizes a multi-threaded, asynchronous architecture that segregates UI rendering from real-time audio decoding and digital signal processing (DSP) loops.
+MP3, FLAC, WAV, Ogg/Vorbis, AAC, M4A and AIFF are supported subject to codec/container compatibility. DSD, VST hosting, room correction, cloud sync and provider streaming are not shipped capabilities. The resampler currently uses linear interpolation. Exclusive output, bit-perfect playback, professional latency and accessibility compliance have not been established.
 
-```mermaid
-graph TD
-    %% Frontend Layer %%
-    subgraph UI ["React 19 Frontend (Vite & TS)"]
-        A[App Entry & Routing] -->|LocalStorage Init| B[State Hydration]
-        A -->|Code-Split Page Load| C[Lazy Pages & Components]
-        C -->|Controls, EQ, Settings| D[State Store]
-        D -->|Tauri Invoke| E[Secure IPC Layer]
-    end
+## Development and checks
 
-    %% Tauri Core Bridge %%
-    subgraph TAURI ["Tauri Core Bridge"]
-        E -->|IPC Commands| F[Rust Tauri Handlers]
-        G[Rust Event Emitter] -->|Playback & FFT Stream| A
-    end
+Use Node 22, the Rust version pinned in `rust-toolchain.toml` and the [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/). Windows requires MSVC and the Windows SDK; Linux also needs ALSA and D-Bus development packages.
 
-    %% Pro-Audio Engine Backend %%
-    subgraph ENGINE ["Native Audio Pipeline (Rust)"]
-        F -->|play_file| H[Media Probe & Format Demuxer]
-        H -->|Symphonia Codec Decoder| I[Sample Converter]
-        I -->|Linear PCM samples| J[Custom FftInterceptor Source]
-        J -->|Push Samples| K[Thread-Safe VecDeque Buffer]
-        J -->|Interleaved L/R Frames| L[Rodio Audio Sink]
-        L -->|ASIO / WASAPI / CoreAudio| M[CPAL Output Device]
-    end
-
-    %% DSP & Analysis Layer %%
-    subgraph DSP ["Real-Time DSP & Spectral Analysis"]
-        K -->|Downmix L+R / Apply Hann Window| N[1024-Point Forward FFT]
-        N -->|Nyquist 512 Magnitudes| O[FFT Data Broadcast Thread]
-        K -->|Interleaved Stereo Samples| O
-        O -->|tauri::Emitter| G
-    end
-
-    style UI fill:#121214,stroke:#333,stroke-width:2px,color:#fff
-    style TAURI fill:#1a1a24,stroke:#444,stroke-width:2px,color:#fff
-    style ENGINE fill:#1c1010,stroke:#553,stroke-width:2px,color:#fff
-    style DSP fill:#101a15,stroke:#353,stroke-width:2px,color:#fff
+```sh
+npm ci
+npm run tauri dev
 ```
 
----
+`npm run dev` previews the UI in a browser. Native playback, credentials, file import and watching require the desktop application.
 
-## 🔬 Core Technical Implementations
+```sh
+npm run check
+npm run format:check
+npm run test:e2e
+cargo fmt --manifest-path src-tauri/Cargo.toml --check
+cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
+cargo clippy --locked --manifest-path src-tauri/Cargo.toml -- -D warnings
+```
 
-### 1. High-Fidelity Audio Engine & Demuxing
-* **Native Codec Decoding**: Instead of relying on Web Audio API or browser decoders, the engine integrates [Symphonia](https://github.com/pdeljanov/symphonia) via [Rodio](https://github.com/RustAudio/rodio) to support hardware-demuxed FLAC, WAV, OGG, ALAC, DSD/DSF, and MP3 formats natively.
-* **Precise Media Probing**: Employs backend media probing to parse audio packets and calculate bit-accurate track durations directly from sample frame lengths, eliminating loose duration guesses.
-* **Thread-Safe Sinks**: Manages streams securely across async contexts by wrapping hardware output streams in custom `SendSyncOutputStream` traits.
+Install Chromium with `npx playwright install chromium` before browser tests. Those tests cover UI persistence and interaction, not hardware playback. Native tests use generated WAV fixtures and isolated SQLite databases.
 
-### 2. Real-Time Spectral Analysis (DSP)
-* **FFT Interception**: Implements a custom structural wrapper `FftInterceptor<Source>` that clones samples on a separate background thread without locking or blocking the playhead.
-* **Spectral Leakage Reduction**: Applies a mathematically precise **Hann Window** function:
-  $$\omega(n) = 0.5 \cdot \left(1 - \cos\left(\frac{2\pi n}{N - 1}\right)\right)$$
-  to all mono-downmixed blocks before performing forward transforms.
-* **Fourier Transforms**: Executes 1024-point forward FFTs using `rustfft` to stream high-resolution frequency magnitudes (clamped at the 512-bin Nyquist limit) at 30fps.
-* **True Stereo Phase Lissajous (Goniometer)**: Demuxes interleaved L and R stereo frames dynamically `L = samples[i], R = samples[i+1]` to calculate phase alignment and draw real-time phase correlation plots.
+## Data and releases
 
-### 3. Frontend Architecture & Optimization
-* **Code-Split Pages**: Leverages `React.lazy` and dynamic import suspends to divide the frontend bundle into modular chunks, decreasing the main boot bundle size from `361 kB` to `320 kB`.
-* **State Hydration**: Restores all volume, purist DSP profiles, equalizer presets, active theme variables, and library tracks from `localStorage` on the first tick of boot.
-* **Zero-Dependency Safety**: Utilizes custom TypeScript type-predicates (`isValidYouTubeItem`) to securely parse search payloads without loading massive external validation libraries.
+Music stays in the selected folders. The database, artwork, waveforms and metadata-edit recovery copies live in the application's data directory. Backups include file paths and metadata, but do not contain audio or credentials. See [PRIVACY.md](PRIVACY.md).
 
-### 4. Accessibility (WCAG 2.1 AA Compliance)
-* **Focus Trapping**: Dynamically locks tab focus inside the equalizer panel using a zero-dependency React listener.
-* **Keyboard Navigability**: Clickable collection items, queue entries, and search cards are mapped with `tabIndex={0}`, `role="button"`, and Space/Enter event listeners.
-* **Reduced Motion Support**: Listens to OS-level media query preferences to freeze animation loops and clear visualizer canvases instantly.
-
----
-
-## 🔒 Enterprise-Grade Security
-* **No Client-Side Secrets**: All third-party endpoints (e.g. YouTube Search, Gemini AI insights) are proxied through Rust IPC Tauri commands. API keys are loaded directly from the system environment and are never embedded in the compiled JavaScript bundle.
-* **Protocol & Input Sanitization**: Rejects any non-HTTP/HTTPS network audio URLs (such as `javascript:` or `file:`) and sanitizes external IDs to prevent command execution or path traversal attacks.
-
----
-
-## 🛠️ Development & Tooling
-
-### Prerequisites
-* **Rust**: `1.75` or higher
-* **Node.js**: `v20.x` or higher
-* **Tauri CLI**: `npm i -g @tauri-apps/cli`
-
-### Execution
-1. Install dependencies:
-   ```bash
-   npm install
-   ```
-2. Launch the application in developer mode:
-   ```bash
-   npm run tauri dev
-   ```
-3. Compile optimized production release builds:
-   ```bash
-   npm run tauri build
-   ```
+The [release runbook](docs/RELEASING.md) describes signing configuration, managed update controls and manual launch gates. The workflow creates a draft release; publishing is a separate action.
