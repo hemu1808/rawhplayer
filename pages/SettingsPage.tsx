@@ -6,6 +6,7 @@ import { usePlayer } from '../context/PlayerContext';
 import { useLibrary } from '../context/LibraryContext';
 import { SoftwareUpdates } from '../components/SoftwareUpdates';
 import { LibraryMaintenance } from '../components/LibraryMaintenance';
+import { AudioAnalysis } from '../components/AudioAnalysis';
 import { saveDeviceProfile } from '../services/deviceProfiles';
 
 interface Props {
@@ -247,6 +248,7 @@ export function SettingsPage({ currentThemeId, onThemeChange, isPuristMode, onTo
           </p>
         )}
         <LibraryMaintenance />
+        <AudioAnalysis />
         <fieldset className="glass-panel rounded-2xl p-6 space-y-4">
           <legend>Optional AI insights</legend>
           <p className="text-sm text-neutral-400">

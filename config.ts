@@ -1,3 +1,5 @@
+import libraryContract from './shared/library-contract.json';
+
 /**
  * Rawh Player — Application Configuration Constants
  *
@@ -10,7 +12,7 @@ export const VERSION = '3.0.0';
 export const APP_IDENTIFIER = 'com.rawhplayer.app';
 
 /** Supported audio file extensions (must match Rust backend whitelist) */
-export const SUPPORTED_EXTENSIONS = ['mp3', 'flac', 'wav', 'ogg', 'aac', 'm4a', 'aiff', 'dsf', 'dff'] as const;
+export const SUPPORTED_EXTENSIONS = libraryContract.audioExtensions;
 
 /** Default audio engine settings */
 export const DEFAULT_SETTINGS = {

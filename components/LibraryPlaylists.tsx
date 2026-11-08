@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useLibrary } from '../context/LibraryContext';
 import { ScrollArea } from './ScrollArea';
 import type { SmartRule } from '../types';
+import { commands } from '../services/generated/native';
+import { catalogQuery } from '../services/nativeLibrary';
 
 export function LibraryPlaylists() {
   const library = useLibrary();
@@ -10,6 +12,7 @@ export function LibraryPlaylists() {
   const [error, setError] = useState('');
   const [editing, setEditing] = useState<string | null>(null);
   const [filters, setFilters] = useState<SmartRule>({});
+  const [counts, setCounts] = useState<Record<string, { revision: number; total: number; rule: string }>>({});
   return (
     <ScrollArea title="Playlists" subtitle="Your collections, separate from the play queue">
       <div className="px-8 pb-28 space-y-6">
@@ -140,10 +143,35 @@ export function LibraryPlaylists() {
             <div>
               <h2 className="font-semibold">{playlist.name}</h2>
               <p className="text-sm text-neutral-400">
-                {library.getPlaylistTracks(playlist.id).length} tracks · {playlist.smartRule ? 'Smart playlist' : 'Saved playlist'}
+                {window.__TAURI_INTERNALS__
+                  ? playlist.smartRule
+                    ? counts[playlist.id]?.revision === library.catalogRevision &&
+                      counts[playlist.id]?.rule === JSON.stringify(playlist.smartRule)
+                      ? `${counts[playlist.id].total} tracks`
+                      : 'Dynamic collection'
+                    : `${playlist.trackIds.length} tracks`
+                  : `${library.getPlaylistTracks(playlist.id).length} tracks`}{' '}
+                · {playlist.smartRule ? 'Smart playlist' : 'Saved playlist'}
               </p>
             </div>
             <div className="flex gap-4">
+              {Boolean(window.__TAURI_INTERNALS__) && playlist.smartRule && (
+                <button
+                  onClick={() => {
+                    void commands
+                      .libraryPage(catalogQuery({ playlistId: playlist.id, limit: 1 }))
+                      .then((page) =>
+                        setCounts((current) => ({
+                          ...current,
+                          [playlist.id]: { revision: library.catalogRevision, total: page.total, rule: JSON.stringify(playlist.smartRule) },
+                        })),
+                      )
+                      .catch(() => setError('Save the playlist before counting its tracks.'));
+                  }}
+                >
+                  Count tracks
+                </button>
+              )}
               <button
                 onClick={() => {
                   setEditing(playlist.id);

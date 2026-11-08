@@ -1,0 +1,25 @@
+{
+  "source": "C:\\Users\\hemu1\\rawhplayer-implementation",
+  "files": [
+    {
+      "path": "src-tauri/release-bom.json",
+      "bytes": 469514,
+      "sha256": "a60b222536df7ed065dd1ce721bdcf82f2b1349e9df4b953eb052e40a316bea8"
+    },
+    {
+      "path": "release-artifacts/licenses-x86_64-pc-windows-msvc.json",
+      "bytes": 58678,
+      "sha256": "b9622f3af93f5593c1fa622e3ffd70497e93778e53dfb386b9f5dc2c653e59d6"
+    },
+    {
+      "path": "release-artifacts/npm-x86_64-pc-windows-msvc.cdx.json",
+      "bytes": 11173,
+      "sha256": "8fb03d6857c12f1176f42a9a0512108d1823696db5cb907212f79b7d0e511d05"
+    },
+    {
+      "path": "release-artifacts/rust-x86_64-pc-windows-msvc.cdx.json",
+      "bytes": 469514,
+      "sha256": "a60b222536df7ed065dd1ce721bdcf82f2b1349e9df4b953eb052e40a316bea8"
+    }
+  ]
+}

@@ -1,7 +1,10 @@
 #[path = "engine.rs"]
 mod audio_engine;
 mod desktop;
+mod ipc;
 mod library;
+mod library_contract;
+mod media_session;
 mod open_files;
 mod policy;
 mod support;
@@ -12,6 +15,7 @@ use tauri::{Emitter, Manager, State};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 #[tauri::command]
+#[specta::specta]
 fn play_file(
     path: String,
     queue_id: String,
@@ -26,6 +30,7 @@ fn play_file(
 }
 
 #[tauri::command]
+#[specta::specta]
 fn toggle_play(engine: State<'_, Option<AudioEngine>>) -> Result<(), String> {
     engine
         .as_ref()
@@ -34,6 +39,7 @@ fn toggle_play(engine: State<'_, Option<AudioEngine>>) -> Result<(), String> {
 }
 
 #[tauri::command]
+#[specta::specta]
 fn seek_audio(position: f64, engine: State<'_, Option<AudioEngine>>) -> Result<(), String> {
     engine
         .as_ref()
@@ -42,6 +48,7 @@ fn seek_audio(position: f64, engine: State<'_, Option<AudioEngine>>) -> Result<(
 }
 
 #[tauri::command]
+#[specta::specta]
 fn set_volume(volume: f32, engine: State<'_, Option<AudioEngine>>) -> Result<(), String> {
     engine
         .as_ref()
@@ -50,6 +57,7 @@ fn set_volume(volume: f32, engine: State<'_, Option<AudioEngine>>) -> Result<(),
 }
 
 #[tauri::command]
+#[specta::specta]
 fn set_equalizer_band(
     index: usize,
     gain: f32,
@@ -62,6 +70,7 @@ fn set_equalizer_band(
 }
 
 #[tauri::command]
+#[specta::specta]
 fn set_purist_mode(is_purist: bool, engine: State<'_, Option<AudioEngine>>) -> Result<(), String> {
     engine
         .as_ref()
@@ -70,6 +79,7 @@ fn set_purist_mode(is_purist: bool, engine: State<'_, Option<AudioEngine>>) -> R
 }
 
 #[tauri::command]
+#[specta::specta]
 fn set_playback_rate(rate: f32, engine: State<'_, Option<AudioEngine>>) -> Result<(), String> {
     engine
         .as_ref()
@@ -78,6 +88,7 @@ fn set_playback_rate(rate: f32, engine: State<'_, Option<AudioEngine>>) -> Resul
 }
 
 #[tauri::command]
+#[specta::specta]
 fn list_audio_devices(
     engine: State<'_, Option<AudioEngine>>,
 ) -> Result<Vec<AudioDeviceInfo>, String> {
@@ -88,6 +99,7 @@ fn list_audio_devices(
 }
 
 #[tauri::command]
+#[specta::specta]
 fn set_crossfade_duration(
     seconds: f32,
     engine: State<'_, Option<AudioEngine>>,
@@ -99,6 +111,7 @@ fn set_crossfade_duration(
 }
 
 #[tauri::command]
+#[specta::specta]
 fn queue_next_file(
     path: String,
     queue_id: String,
@@ -113,6 +126,7 @@ fn queue_next_file(
 }
 
 #[tauri::command]
+#[specta::specta]
 fn get_audio_info(engine: State<'_, Option<AudioEngine>>) -> Result<AudioInfo, String> {
     engine
         .as_ref()
@@ -121,11 +135,13 @@ fn get_audio_info(engine: State<'_, Option<AudioEngine>>) -> Result<AudioInfo, S
 }
 
 #[tauri::command]
+#[specta::specta]
 fn stop_audio(engine: State<'_, Option<AudioEngine>>) -> Result<(), String> {
     engine.as_ref().ok_or("Audio engine unavailable")?.stop()
 }
 
 #[tauri::command]
+#[specta::specta]
 fn clear_pending(engine: State<'_, Option<AudioEngine>>) -> Result<(), String> {
     engine
         .as_ref()
@@ -134,6 +150,7 @@ fn clear_pending(engine: State<'_, Option<AudioEngine>>) -> Result<(), String> {
 }
 
 #[tauri::command]
+#[specta::specta]
 fn set_paused(paused: bool, engine: State<'_, Option<AudioEngine>>) -> Result<(), String> {
     engine
         .as_ref()
@@ -141,6 +158,7 @@ fn set_paused(paused: bool, engine: State<'_, Option<AudioEngine>>) -> Result<()
         .set_paused(paused)
 }
 #[tauri::command]
+#[specta::specta]
 fn set_output_device(
     device_id: Option<String>,
     engine: State<'_, Option<AudioEngine>>,
@@ -151,6 +169,7 @@ fn set_output_device(
         .set_output_device(device_id)
 }
 #[tauri::command]
+#[specta::specta]
 fn set_normalization(
     mode: String,
     preamp_db: f32,
@@ -163,6 +182,7 @@ fn set_normalization(
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn pick_music(
     app: tauri::AppHandle,
     folder: bool,
@@ -174,10 +194,7 @@ async fn pick_music(
             picker.blocking_pick_folder().map(|p| vec![p])
         } else {
             picker
-                .add_filter(
-                    "Audio",
-                    &["mp3", "flac", "wav", "ogg", "aac", "m4a", "aiff"],
-                )
+                .add_filter("Audio", library_contract::AUDIO_EXTENSIONS)
                 .blocking_pick_files()
         };
         let paths: Vec<String> = selected
@@ -194,27 +211,28 @@ async fn pick_music(
     .map_err(|e| e.to_string())?
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, specta::Type)]
 struct GeminiPart {
     text: String,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, specta::Type)]
 struct GeminiContent {
     parts: Vec<GeminiPart>,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, specta::Type)]
 struct GeminiCandidate {
     content: GeminiContent,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, specta::Type)]
 struct GeminiResponse {
     candidates: Vec<GeminiCandidate>,
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn get_track_insight(
     artist: String,
     title: String,
@@ -267,6 +285,7 @@ async fn get_track_insight(
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn search_youtube(
     query: String,
     client: State<'_, reqwest::Client>,
@@ -303,7 +322,10 @@ async fn search_youtube(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let contracts = ipc::builder();
+    let handler = contracts.invoke_handler();
     tauri::Builder::default()
+        .invoke_handler(handler)
         .manage(open_files::OpenFiles::default())
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             open_files::queue_arguments(app, args, std::path::Path::new(&cwd));
@@ -329,9 +351,7 @@ pub fn run() {
                         .and_then(|_| library.import_paths(paths));
                     match result {
                         Ok(_) => {
-                            if let Ok(snapshot) = library.load() {
-                                let _ = app.emit("library_changed", snapshot);
-                            }
+                            library::catalog::notify(&app);
                         }
                         Err(error) => {
                             let _ = app.emit("audio_error", error);
@@ -362,7 +382,8 @@ pub fn run() {
                 })
                 .build(),
         )
-        .setup(|app| {
+        .setup(move |app| {
+            contracts.mount_events(app);
             let handle = app.handle().clone();
             app.manage(policy::Policy::load().map_err(std::io::Error::other)?);
             app.manage(desktop::DesktopState::default());
@@ -392,6 +413,15 @@ pub fn run() {
                 }
             };
             app.manage(engine_opt);
+            app.manage(library::analysis::AnalysisWorker::default());
+
+            let has_media_session = match media_session::install(&handle) {
+                Ok(()) => true,
+                Err(error) => {
+                    log::warn!("OS media session unavailable: {error}");
+                    false
+                }
+            };
 
             let watcher =
                 watcher::FolderWatcher::new(handle.clone()).map_err(std::io::Error::other)?;
@@ -402,67 +432,20 @@ pub fn run() {
                 .build()?;
             app.manage(client);
 
-            if let Ok(play_pause) = "MediaPlayPause".parse::<Shortcut>() {
-                let _ = app.handle().global_shortcut().register(play_pause);
-            }
-            if let Ok(next_track) = "MediaTrackNext".parse::<Shortcut>() {
-                let _ = app.handle().global_shortcut().register(next_track);
-            }
-            if let Ok(prev_track) = "MediaTrackPrevious".parse::<Shortcut>() {
-                let _ = app.handle().global_shortcut().register(prev_track);
+            if !has_media_session {
+                if let Ok(play_pause) = "MediaPlayPause".parse::<Shortcut>() {
+                    let _ = app.handle().global_shortcut().register(play_pause);
+                }
+                if let Ok(next_track) = "MediaTrackNext".parse::<Shortcut>() {
+                    let _ = app.handle().global_shortcut().register(next_track);
+                }
+                if let Ok(prev_track) = "MediaTrackPrevious".parse::<Shortcut>() {
+                    let _ = app.handle().global_shortcut().register(prev_track);
+                }
             }
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            pick_music,
-            open_files::take_open_files,
-            desktop::set_compact_mode,
-            policy::deployment_policy,
-            library::library_load,
-            library::library_migrate_legacy,
-            library::library_save,
-            library::library_import_paths,
-            library::library_remove_track,
-            library::library_locate_track,
-            library::library_reconcile,
-            library::library_cancel_scan,
-            library::library_search,
-            library::library_export,
-            library::library_restore,
-            library::library_waveform,
-            library::library_read_lyrics,
-            library::library_update_metadata,
-            library::library_undo_metadata,
-            play_file,
-            toggle_play,
-            seek_audio,
-            set_volume,
-            get_track_insight,
-            search_youtube,
-            set_equalizer_band,
-            set_purist_mode,
-            set_playback_rate,
-            list_audio_devices,
-            set_crossfade_duration,
-            queue_next_file,
-            get_audio_info,
-            stop_audio,
-            clear_pending,
-            set_paused,
-            set_output_device,
-            set_normalization,
-            support::credential_status,
-            support::credential_set,
-            support::credential_delete,
-            support::diagnostics_export,
-            support::update_status,
-            watcher::start_watching,
-            watcher::stop_watching,
-            watcher::get_watched_folders,
-            watcher::remove_watched_folder,
-            watcher::pick_watched_folder
-        ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app, _event| {

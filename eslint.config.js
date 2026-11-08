@@ -7,6 +7,7 @@ export default ts.config(
   {
     ignores: [
       'dist/**',
+      'services/generated/**',
       'node_modules/**',
       'src-tauri/**',
       'playwright-report/**',

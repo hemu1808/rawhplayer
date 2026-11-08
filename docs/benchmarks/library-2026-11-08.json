@@ -1,0 +1,31 @@
+{
+  "date": "2026-11-08",
+  "platform": "Windows x64",
+  "rust": "1.99.1",
+  "profile": "test, unoptimized, debug symbols disabled",
+  "scope": "Synthetic metadata SQLite/FTS benchmark; excludes media decoding, frontend rendering and IPC",
+  "before": [{ "tracks": 10000, "insertMs": 19084 }],
+  "after": [
+    {
+      "tracks": 10000,
+      "insertMs": 1516,
+      "loadMs": 180,
+      "favoriteSaveMs": 208,
+      "favoriteRowWrites": 2,
+      "unchangedSaveMs": 220,
+      "unchangedRowWrites": 0,
+      "searchMs": 21
+    },
+    {
+      "tracks": 100000,
+      "insertMs": 17272,
+      "loadMs": 1842,
+      "favoriteSaveMs": 2126,
+      "favoriteRowWrites": 2,
+      "unchangedSaveMs": 2151,
+      "unchangedRowWrites": 0,
+      "searchMs": 203
+    }
+  ],
+  "interpretation": "Indexed FTS rowids remove repeated full-table scans; whole-snapshot reads and validation still cost time proportional to library size. Measurements are one local run, not portable latency guarantees."
+}

@@ -1,6 +1,6 @@
 //! Output streams and decoders are owned by one worker; IPC carries only commands.
 #[path = "audio/mod.rs"]
-mod audio;
+pub(crate) mod audio;
 use audio::{
     decoder::ResampledTrack,
     output::{self, OutputSignals},
@@ -15,14 +15,15 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
+use tauri_specta::Event;
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, specta::Type)]
 pub struct AudioDeviceInfo {
     pub id: String,
     pub name: String,
     pub is_default: bool,
 }
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, specta::Type)]
 pub struct TrackEvent {
     pub queue_id: String,
     pub path: String,
@@ -32,12 +33,18 @@ pub struct TrackEvent {
     pub channels: u16,
     pub format: String,
 }
-#[derive(Clone, Serialize)]
+impl tauri_specta::Event for TrackEvent {
+    const NAME: &'static str = "track_started";
+}
+#[derive(Clone, Serialize, specta::Type)]
 pub struct EndedEvent {
     pub queue_id: String,
     pub path: String,
     pub next_queue_id: Option<String>,
     pub reason: String,
+}
+impl tauri_specta::Event for EndedEvent {
+    const NAME: &'static str = "track_ended";
 }
 pub enum RenderNotice {
     Started {
@@ -50,7 +57,7 @@ pub enum RenderNotice {
         event: EndedEvent,
     },
 }
-#[derive(Clone, Serialize, Default)]
+#[derive(Clone, Serialize, Default, specta::Type)]
 pub struct AudioInfo {
     pub sample_rate: u32,
     pub bit_depth: u16,
@@ -59,6 +66,7 @@ pub struct AudioInfo {
     pub output_sample_rate: Option<u32>,
     pub output_channels: Option<usize>,
     pub output_format: Option<String>,
+    pub resampler: String,
     pub queue_id: Option<String>,
     pub path: Option<String>,
     pub current_time: f64,
@@ -74,6 +82,9 @@ pub struct AudioInfo {
     pub underrun_count: u64,
     pub ready: bool,
     pub error: Option<String>,
+}
+impl tauri_specta::Event for AudioInfo {
+    const NAME: &'static str = "playback_update";
 }
 enum Command {
     Play(String, String),
@@ -211,6 +222,7 @@ fn worker(app: AppHandle, receiver: mpsc::Receiver<Request>, shared: Arc<Mutex<A
     let mut last_update = Instant::now();
     let mut retry = Instant::now() - Duration::from_secs(3);
     let mut last_fft = Instant::now();
+    let mut media = crate::media_session::Publisher::default();
     let fft = rustfft::FftPlanner::<f32>::new().plan_fft_forward(1024);
     loop {
         if device.is_none() && retry.elapsed() > Duration::from_secs(2) {
@@ -420,13 +432,13 @@ fn worker(app: AppHandle, receiver: mpsc::Receiver<Request>, shared: Arc<Mutex<A
                 } if g == generation => {
                     let _ = serial;
                     audible = Some(event.clone());
-                    let _ = app.emit("track_started", event);
+                    let _ = event.emit(&app);
                 }
                 RenderNotice::Ended {
                     generation: g,
                     event,
                 } if g == generation => {
-                    let _ = app.emit("track_ended", event);
+                    let _ = event.emit(&app);
                 }
                 _ => (),
             }
@@ -454,13 +466,22 @@ fn worker(app: AppHandle, receiver: mpsc::Receiver<Request>, shared: Arc<Mutex<A
                 signals.playing.load(Ordering::Acquire) && !signals.paused.load(Ordering::Acquire);
             info.volume = pipe.volume;
             info.playback_rate = pipe.speed;
+            info.resampler = if info.sample_rate == 0 {
+                "Inactive"
+            } else if info.output_sample_rate == Some(info.sample_rate) && pipe.speed == 1.0 {
+                "Bypassed (matching rate)"
+            } else {
+                "Rubato sinc (256 taps)"
+            }
+            .into();
             info.is_purist = pipe.purist;
             info.crossfade_seconds = pipe.crossfade;
             info.normalization = pipe.normalization.clone();
             info.preamp_db = pipe.preamp_db;
             info.clipping_count = pipe.clipping;
             info.underrun_count = signals.underruns.load(Ordering::Relaxed);
-            let _ = app.emit("playback_update", info.clone());
+            let _ = info.clone().emit(&app);
+            media.update(&app, &info);
             last_update = Instant::now();
         }
         if last_fft.elapsed() > Duration::from_millis(33)

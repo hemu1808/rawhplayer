@@ -19,7 +19,6 @@ import { useDynamicTheme } from './hooks/useDynamicTheme';
 import { invoke } from '@tauri-apps/api/core';
 import { PlaybackQueue } from './components/PlaybackQueue';
 import { LibraryPlaylists } from './components/LibraryPlaylists';
-import type { Track } from './types';
 import { SignalPath } from './components/SignalPath';
 import { WaveformSeek } from './components/WaveformSeek';
 import { APP_NAME } from './config';
@@ -70,7 +69,7 @@ const AppContent: React.FC = () => {
     toggleLike,
     dispatch: libDispatch,
     playById,
-    addTracks,
+    pickMusic,
     error: libraryError,
     clearError: clearLibraryError,
   } = useLibrary();
@@ -145,17 +144,10 @@ const AppContent: React.FC = () => {
       case 'files':
         return (
           <FilesPage
-            onImport={async (folder) => {
-              try {
-                const tracks = await invoke<Track[]>('pick_music', { folder });
-                addTracks(tracks);
-              } catch (error) {
-                setToastMsg(String(error));
-              }
-            }}
+            onImport={pickMusic}
             tracks={libState.tracks}
             onPlay={(t) => {
-              playTrack(libState.tracks.findIndex((x) => x.id === t.id));
+              playById(t.id);
               setActivePage('player');
             }}
             onUpload={(e) => {

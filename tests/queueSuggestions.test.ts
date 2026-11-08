@@ -36,4 +36,27 @@ describe('local queue suggestions', () => {
     expect(suggestions[1].reasons).toContain('Not played yet');
     expect(suggestQueue(tracks, [], undefined, 0)).toEqual([]);
   });
+  it('explains confident audio matches and omits uncertain tempo and key claims', () => {
+    const analysis: NonNullable<Track['analysis']> = {
+      version: 1,
+      contentHash: 'a'.repeat(64),
+      analyzedSeconds: 180,
+      complete: true,
+      bpm: 120,
+      bpmConfidence: 0.8,
+      musicalKey: 'C major',
+      keyConfidence: 0.6,
+      integratedLufs: -14,
+      truePeakDb: -1,
+      energy: 0.2,
+    };
+    const current = track('current', { analysis });
+    const matched = track('matched', { analysis: { ...analysis, bpm: 123, musicalKey: 'A minor' } });
+    const uncertain = track('uncertain', { analysis: { ...analysis, bpmConfidence: 0.05, keyConfidence: 0.05 } });
+    const suggestions = suggestQueue([matched, uncertain], [], current);
+    expect(suggestions[0].track.id).toBe('matched');
+    expect(suggestions[0].reasons).toContain('Similar estimated tempo (≈123 BPM)');
+    expect(suggestions[0].reasons).toContain('Compatible estimated key (A minor)');
+    expect(suggestions[1].reasons.some((reason) => reason.includes('tempo') || reason.includes('key'))).toBe(false);
+  });
 });

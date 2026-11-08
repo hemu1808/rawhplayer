@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   emptyLibrary,
+  LIBRARY_LIMITS,
   mergeTracks,
   parseLibrarySnapshot,
   removeQueueEntrySnapshot,
@@ -27,6 +28,26 @@ describe('durable library invariants', () => {
   });
   it('rejects corrupt persisted state', () => {
     expect(() => parseLibrarySnapshot({ schemaVersion: 999 })).toThrow();
+  });
+  it('loads existing libraries above the old browser limit without truncation', () => {
+    const snapshot = emptyLibrary();
+    snapshot.tracks = Array.from({ length: 100_001 }, (_, index) => ({
+      id: String(index),
+      name: 'Track',
+      artist: 'Artist',
+      path: `C:/music/${index}.wav`,
+    }));
+    const loaded = parseLibrarySnapshot(snapshot);
+    expect(loaded.tracks).toHaveLength(100_001);
+    expect(loaded.tracks.at(-1)?.id).toBe('100000');
+  });
+  it('rejects tracks and queue entries beyond the shared contract', () => {
+    const snapshot = emptyLibrary();
+    snapshot.tracks = new Array(LIBRARY_LIMITS.maxTracks + 1).fill(first);
+    expect(() => parseLibrarySnapshot(snapshot)).toThrow();
+    snapshot.tracks = [first];
+    snapshot.queue = new Array(LIBRARY_LIMITS.maxQueueEntries + 1).fill({ id: 'entry', trackId: first.id });
+    expect(() => parseLibrarySnapshot(snapshot)).toThrow();
   });
   it('evaluates smart favorites against current library data', () => {
     const playlist = { id: 'favorites', name: 'Favorites', trackIds: [], createdAt: 0, smartRule: { likedOnly: true } };

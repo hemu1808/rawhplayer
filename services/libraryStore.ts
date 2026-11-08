@@ -1,7 +1,9 @@
 import { LibrarySnapshot, PlaybackMode, Playlist, QueueEntry, SmartRule, Track } from '../types';
+import contract from '../shared/library-contract.json';
 
 export const LIBRARY_KEY = 'rawh_library_v1';
-const MAX_TRACKS = 100_000;
+export const LIBRARY_LIMITS = contract;
+const MAX_TRACKS = contract.maxTracks;
 const object = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 const text = (value: unknown, max = 4096): value is string =>
@@ -43,6 +45,35 @@ export function parseTrack(value: unknown): Track {
   if (typeof value.isLiked === 'boolean') track.isLiked = value.isLiked;
   if (typeof value.missing === 'boolean') track.missing = value.missing;
   if (value.source === 'local' || value.source === 'youtube') track.source = value.source;
+  const analysis = value.analysis;
+  if (
+    object(analysis) &&
+    analysis.version === 1 &&
+    text(analysis.contentHash, 64) &&
+    /^[a-f0-9]{64}$/.test(analysis.contentHash) &&
+    finite(analysis.analyzedSeconds) &&
+    analysis.analyzedSeconds >= 0 &&
+    analysis.analyzedSeconds <= 3600 &&
+    typeof analysis.complete === 'boolean' &&
+    finite(analysis.bpmConfidence) &&
+    analysis.bpmConfidence >= 0 &&
+    analysis.bpmConfidence <= 1 &&
+    finite(analysis.keyConfidence) &&
+    analysis.keyConfidence >= 0 &&
+    analysis.keyConfidence <= 1 &&
+    finite(analysis.energy) &&
+    analysis.energy >= 0 &&
+    analysis.energy <= 1 &&
+    (analysis.bpm === null || (finite(analysis.bpm) && analysis.bpm >= 20 && analysis.bpm <= 400)) &&
+    (analysis.musicalKey === null ||
+      (typeof analysis.musicalKey === 'string' && /^[A-G]#? (major|minor)$/.test(analysis.musicalKey))) &&
+    (analysis.integratedLufs === null ||
+      (finite(analysis.integratedLufs) && analysis.integratedLufs >= -100 && analysis.integratedLufs <= 50)) &&
+    (analysis.truePeakDb === null ||
+      (finite(analysis.truePeakDb) && analysis.truePeakDb >= -300 && analysis.truePeakDb <= 100))
+  ) {
+    track.analysis = analysis as unknown as NonNullable<Track['analysis']>;
+  }
   return track;
 }
 
@@ -74,9 +105,9 @@ export function parseLibrarySnapshot(value: unknown): LibrarySnapshot {
     !Array.isArray(value.tracks) ||
     value.tracks.length > MAX_TRACKS ||
     !Array.isArray(value.queue) ||
-    value.queue.length > MAX_TRACKS ||
+    value.queue.length > contract.maxQueueEntries ||
     !Array.isArray(value.playlists) ||
-    value.playlists.length > 10_000 ||
+    value.playlists.length > contract.maxPlaylists ||
     !object(value.session) ||
     !Array.isArray(value.watchedFolders)
   ) {
@@ -107,7 +138,7 @@ export function parseLibrarySnapshot(value: unknown): LibrarySnapshot {
       !text(playlist.name, 256) ||
       !playlist.name.trim() ||
       !Array.isArray(playlist.trackIds) ||
-      playlist.trackIds.length > MAX_TRACKS ||
+      playlist.trackIds.length > contract.maxPlaylistTracks ||
       !playlist.trackIds.every((id) => typeof id === 'string' && trackIds.has(id))
     ) {
       throw new Error('Invalid playlist in library backup.');
@@ -124,7 +155,7 @@ export function parseLibrarySnapshot(value: unknown): LibrarySnapshot {
   const mode = value.session.playbackMode;
   if (!Object.values(PlaybackMode).includes(mode as PlaybackMode)) throw new Error('Invalid playback mode.');
   if (!finite(value.session.position) || value.session.position < 0) throw new Error('Invalid playback position.');
-  if (value.watchedFolders.length > 1000 || !value.watchedFolders.every((path) => text(path))) {
+  if (value.watchedFolders.length > contract.maxWatchedFolders || !value.watchedFolders.every((path) => text(path))) {
     throw new Error('Invalid watched folders.');
   }
   return {
@@ -195,6 +226,7 @@ export function mergeTracks(existing: Track[], incoming: Track[]): Track[] {
       byId.set(track.id, result.length);
       if (track.path) byPath.set(pathKey(track.path), result.length);
       result.push(track);
+      if (result.length > MAX_TRACKS) throw new Error(`The library supports at most ${MAX_TRACKS} tracks.`);
     }
   }
   return result;

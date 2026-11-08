@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useReducer, useRef, useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { commands, events } from '../services/generated/native';
 import { listen } from '@tauri-apps/api/event';
 import { AudioInfo, AudioState, PlayerAction } from '../types';
 import { readDeviceVolume } from '../services/deviceProfiles';
@@ -37,7 +37,13 @@ const finite = (value: unknown): value is number => typeof value === 'number' &&
 const clamp = (value: number, min: number, max: number, fallback: number) =>
   Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
 export const errorMessage = (error: unknown) =>
-  error instanceof Error ? error.message : typeof error === 'string' ? error : 'The operation could not be completed. Please try again.';
+  error instanceof Error
+    ? error.message
+    : typeof error === 'string'
+      ? error
+      : error && typeof error === 'object' && 'message' in error && typeof error.message === 'string'
+        ? error.message
+        : 'The operation could not be completed. Please try again.';
 
 export function playerReducer(state: AudioState, action: PlayerAction): AudioState {
   switch (action.type) {
@@ -118,7 +124,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const refreshAudioInfo = useCallback(async () => {
     if (!isNative()) return;
     try {
-      const info = await invoke<AudioInfo>('get_audio_info');
+      const info = await commands.getAudioInfo();
       if (!mounted.current || !info || !finite(info.current_time) || !finite(info.duration)) return;
       infoRef.current = info;
       setNativeInfo(info);
@@ -137,7 +143,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         reportError('Playback is available in the desktop app.');
         return;
       }
-      void invoke('seek_audio', { position }).catch(reportError);
+      void commands.seekAudio(position).catch(reportError);
     },
     [reportError],
   );
@@ -151,16 +157,16 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       reportError('Playback is available in the desktop app.');
       return;
     }
-    void invoke('toggle_play').catch(reportError);
+    void commands.togglePlay().catch(reportError);
   }, [reportError]);
 
   const dispatch = useCallback(
     (action: PlayerAction) => {
       if (action.type === 'PLAY') {
         if (!infoRef.current?.queue_id) resumeHandler.current?.();
-        else void invoke('set_paused', { paused: false }).catch(reportError);
+        else void commands.setPaused(false).catch(reportError);
       } else if (action.type === 'PAUSE') {
-        if (isNative()) void invoke('set_paused', { paused: true }).catch(reportError);
+        if (isNative()) void commands.setPaused(true).catch(reportError);
       } else if (action.type === 'SEEK') seek(action.payload);
       else reduce(action);
     },
@@ -186,7 +192,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [state.volume, state.isMuted, state.isPuristMode, state.playbackRate, reportError]);
 
   useEffect(() => {
-    if (isNative()) void invoke('set_volume', { volume: state.isMuted ? 0 : state.volume }).catch(reportError);
+    if (isNative()) void commands.setVolume(state.isMuted ? 0 : state.volume).catch(reportError);
   }, [state.volume, state.isMuted, reportError]);
   useEffect(() => {
     const device = nativeInfo?.device_name;
@@ -196,7 +202,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (volume !== undefined) reduce({ type: 'SET_STATE', payload: { volume } });
   }, [nativeInfo?.device_name]);
   useEffect(() => {
-    if (isNative()) void invoke('set_playback_rate', { rate: state.playbackRate }).catch(reportError);
+    if (isNative()) void commands.setPlaybackRate(state.playbackRate).catch(reportError);
   }, [state.playbackRate, reportError]);
 
   useEffect(() => {
@@ -214,21 +220,34 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         if (active) reportError(reason);
       }
     };
-    void attach<Partial<AudioInfo>>('playback_update', (payload) => {
-      if (!finite(payload.current_time) || !finite(payload.duration) || typeof payload.is_playing !== 'boolean') return;
-      reduce({
-        type: 'UPDATE_PLAYBACK',
-        payload: { currentTime: payload.current_time, duration: payload.duration, isPlaying: payload.is_playing },
-      });
-      if (finite(payload.sample_rate)) reduce({ type: 'SET_STATE', payload: { sampleRate: payload.sample_rate } });
-      if (infoRef.current) {
-        infoRef.current = { ...infoRef.current, ...payload };
-        setNativeInfo(infoRef.current);
-      } else void refreshAudioInfo();
-      setStatus(payload.is_playing ? 'playing' : payload.queue_id ? 'paused' : 'idle');
-    });
+    void events.playbackUpdate
+      .listen(({ payload }) => {
+        if (!finite(payload.current_time) || !finite(payload.duration) || typeof payload.is_playing !== 'boolean') return;
+        reduce({
+          type: 'UPDATE_PLAYBACK',
+          payload: { currentTime: payload.current_time, duration: payload.duration, isPlaying: payload.is_playing },
+        });
+        if (finite(payload.sample_rate)) reduce({ type: 'SET_STATE', payload: { sampleRate: payload.sample_rate } });
+        if (infoRef.current) {
+          infoRef.current = { ...infoRef.current, ...payload };
+          setNativeInfo(infoRef.current);
+        } else void refreshAudioInfo();
+        setStatus(payload.is_playing ? 'playing' : payload.queue_id ? 'paused' : 'idle');
+      })
+      .then((unlisten) => {
+        if (active) cleanups.push(unlisten);
+        else unlisten();
+      })
+      .catch(reportError);
     void attach<unknown>('audio_error', (reason) => reportError(reason));
     void attach<unknown>('media_play_pause', () => togglePlayPause());
+    void attach<unknown>('media_play', () => dispatch({ type: 'PLAY' }));
+    void attach<unknown>('media_pause', () => dispatch({ type: 'PAUSE' }));
+    void attach<number>('media_position', (position) => seek(position));
+    void attach<number>('media_seek', (seconds) =>
+      seek(Math.min(infoRef.current?.duration || Number.MAX_SAFE_INTEGER, Math.max(0, (infoRef.current?.current_time || 0) + seconds))),
+    );
+    void attach<number>('media_volume', (volume) => dispatch({ type: 'SET_VOLUME', payload: volume }));
     void attach<unknown>('track_started', () => {
       setError(null);
       void refreshAudioInfo();
@@ -241,7 +260,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       clearInterval(refresh);
       cleanups.forEach((cleanup) => cleanup());
     };
-  }, [refreshAudioInfo, reportError, togglePlayPause]);
+  }, [refreshAudioInfo, reportError, togglePlayPause, dispatch, seek]);
 
   return (
     <PlayerContext.Provider

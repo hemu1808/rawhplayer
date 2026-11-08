@@ -1,11 +1,13 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { LibraryAction, LibrarySnapshot, PlaybackMode, Playlist, QueueEntry, SmartRule, Track } from '../types';
 import {
   emptyLibrary,
   findDuplicateTracks,
   LIBRARY_KEY,
+  LIBRARY_LIMITS,
   loadBrowserLibrary,
   mergeTracks,
   nextQueueEntry,
@@ -18,6 +20,8 @@ import {
 import { flushStats, recordListeningTime, recordPlay } from '../services/statsService';
 import { errorMessage, usePlayer } from './PlayerContext';
 import { suggestQueue, type QueueSuggestion } from '../services/queueSuggestions';
+import { commands as native, events, type CatalogQuery } from '../services/generated/native';
+import { catalogQuery, NativeLibrarySession, nativeSnapshot, preserveUserMetadata } from '../services/nativeLibrary';
 
 export interface QueueTrack extends Track {
   queueId: string;
@@ -30,6 +34,10 @@ export interface ScanProgress {
   cancelled: boolean;
 }
 interface LibraryContextType {
+  totalTracks: number;
+  catalogRevision: number;
+  queryCatalog: (query: Partial<CatalogQuery>) => Promise<{ tracks: Track[]; total: number }>;
+  getTracks: (ids: string[]) => Promise<Track[]>;
   state: { tracks: Track[]; currentTrackIndex: number; playbackMode: PlaybackMode };
   snapshot: LibrarySnapshot;
   ready: boolean;
@@ -38,6 +46,7 @@ interface LibraryContextType {
   dispatch: React.Dispatch<LibraryAction>;
   processFiles: (files: FileList | File[]) => Promise<void>;
   importPaths: (paths: string[]) => Promise<void>;
+  pickMusic: (folder: boolean) => Promise<void>;
   addTracks: (tracks: Track[]) => void;
   handleNext: () => void;
   handlePrev: (currentTime: number) => void;
@@ -77,6 +86,9 @@ const queueEntry = (trackId: string): QueueEntry => ({ id: crypto.randomUUID(), 
 const LibraryContext = createContext<LibraryContextType | undefined>(undefined);
 
 export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const nativeSession = useRef(new NativeLibrarySession());
+  const [totalTracks, setTotalTracks] = useState(0);
+  const [catalogRevision, setCatalogRevision] = useState(0);
   const [snapshot, setSnapshot] = useState<LibrarySnapshot>(emptyLibrary);
   const snapshotRef = useRef(snapshot);
   const [ready, setReady] = useState(false);
@@ -94,6 +106,8 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const writes = useRef<Promise<void>>(Promise.resolve());
   const writeVersion = useRef(0);
   const busy = useRef(0);
+  const durableSnapshot = useRef<LibrarySnapshot | null>(null);
+  const maximumSaveDelay = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mounted = useRef(true);
   const { reportError: playerError, setLoading, registerResumeHandler, refreshAudioInfo } = usePlayer();
   const reportError = useCallback((reason: unknown) => {
@@ -101,7 +115,18 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, []);
   const clearError = useCallback(() => setError(null), []);
   const update = useCallback((change: (current: LibrarySnapshot) => LibrarySnapshot) => {
-    const next = change(snapshotRef.current);
+    let next = change(snapshotRef.current);
+    if (next === snapshotRef.current) return;
+    if (isNative()) {
+      nativeSession.current.observe(snapshotRef.current, next);
+      if (next.tracks.length > 4096) {
+        const pinned = nativeSession.current.dirtyTrackIds;
+        const selected = next.queue.find((entry) => entry.id === next.session.currentQueueId);
+        if (selected) pinned.add(selected.trackId);
+        const recent = new Set(next.tracks.slice(-4096).map((track) => track.id));
+        next = { ...next, tracks: next.tracks.filter((track) => pinned.has(track.id) || recent.has(track.id)) };
+      }
+    }
     snapshotRef.current = next;
     setSnapshot(next);
   }, []);
@@ -117,17 +142,23 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
   );
 
   const save = useCallback(() => {
-    if (!readyRef.current || busy.current) return writes.current;
+    if (!readyRef.current || busy.current) return writes.current.then(() => false);
     const version = ++writeVersion.current;
-    writes.current = writes.current
+    const result = writes.current
       .then(async () => {
-        if (version !== writeVersion.current || !readyRef.current || busy.current) return;
-        const current = parseLibrarySnapshot(snapshotRef.current);
-        if (isNative()) await invoke('library_save', { snapshot: current });
-        else localStorage.setItem(LIBRARY_KEY, JSON.stringify(current));
+        if (version !== writeVersion.current || !readyRef.current || busy.current) return false;
+        if (isNative()) {
+          await nativeSession.current.save(snapshotRef.current);
+          setCatalogRevision((value) => Math.max(value, nativeSession.current.catalogRevision));
+        } else localStorage.setItem(LIBRARY_KEY, JSON.stringify(parseLibrarySnapshot(snapshotRef.current)));
+        return true;
       })
-      .catch(reportError);
-    return writes.current;
+      .catch((reason) => {
+        reportError(reason);
+        return false;
+      });
+    writes.current = result.then(() => undefined);
+    return result;
   }, [reportError]);
 
   useEffect(() => {
@@ -135,16 +166,24 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
     let active = true;
     const load = async () => {
       try {
-        let loaded = isNative() ? parseLibrarySnapshot(await invoke('library_load')) : loadBrowserLibrary();
-        if (isNative() && !loaded.tracks.length && (localStorage.getItem(LIBRARY_KEY) || localStorage.getItem('rawh_tracks'))) {
+        let header = isNative() ? await native.libraryBootstrap() : null;
+        let loaded = header ? nativeSnapshot(header) : loadBrowserLibrary();
+        if (header && !header.trackCount && (localStorage.getItem(LIBRARY_KEY) || localStorage.getItem('rawh_tracks'))) {
           try {
             const legacy = loadBrowserLibrary();
-            loaded = parseLibrarySnapshot(await invoke('library_migrate_legacy', { backup: JSON.stringify(legacy) }));
+            await native.libraryMigrateLegacy(JSON.stringify(legacy));
+            header = await native.libraryBootstrap();
+            loaded = nativeSnapshot(header);
           } catch (reason) {
             if (active) reportError(`Your previous library was preserved but could not be migrated: ${errorMessage(reason)}`);
           }
         }
         if (!active) return;
+        if (header) {
+          nativeSession.current.adopt(header);
+          setTotalTracks(header.trackCount);
+          setCatalogRevision(header.catalogRevision);
+        }
         update(() => loaded);
         readyRef.current = true;
         setReady(true);
@@ -161,9 +200,87 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   useEffect(() => {
     if (!ready) return;
-    const timer = window.setTimeout(() => void save(), 400);
+    const previous = durableSnapshot.current;
+    durableSnapshot.current = snapshot;
+    const persist = () => {
+      if (maximumSaveDelay.current !== null) clearTimeout(maximumSaveDelay.current);
+      maximumSaveDelay.current = null;
+      void save();
+    };
+    // Durable edits do not wait for transport updates to become quiet.
+    if (
+      !previous ||
+      previous.tracks !== snapshot.tracks ||
+      previous.queue !== snapshot.queue ||
+      previous.playlists !== snapshot.playlists ||
+      previous.watchedFolders !== snapshot.watchedFolders ||
+      previous.session.currentQueueId !== snapshot.session.currentQueueId ||
+      previous.session.playbackMode !== snapshot.session.playbackMode
+    ) {
+      persist();
+      return;
+    }
+    // Position checkpoints may coalesce, but continuous updates cannot starve them.
+    if (maximumSaveDelay.current === null) maximumSaveDelay.current = setTimeout(persist, 2000);
+    const timer = window.setTimeout(persist, 400);
     return () => clearTimeout(timer);
   }, [snapshot, ready, save]);
+
+  useEffect(
+    () => () => {
+      if (maximumSaveDelay.current !== null) clearTimeout(maximumSaveDelay.current);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!isNative()) return;
+    let active = true;
+    let closing = false;
+    let removeListener: (() => void) | undefined;
+    const windowHandle = getCurrentWindow();
+    void windowHandle
+      .onCloseRequested(async (event) => {
+        if (closing) return;
+        event.preventDefault();
+        if (busy.current) {
+          reportError('Wait for the library operation to finish before closing RawhPlayer.');
+          return;
+        }
+        if (readyRef.current) {
+          let stable = false;
+          for (let attempt = 0; attempt < 4; attempt++) {
+            const snapshotBeforeSave = snapshotRef.current;
+            if (!(await save())) return;
+            if (snapshotBeforeSave === snapshotRef.current) {
+              stable = true;
+              break;
+            }
+          }
+          if (!stable) {
+            reportError('New library changes are still being saved. Try closing again.');
+            return;
+          }
+        }
+        flushStats();
+        closing = true;
+        try {
+          await windowHandle.destroy();
+        } catch (reason) {
+          closing = false;
+          reportError(reason);
+        }
+      })
+      .then((unlisten) => {
+        if (active) removeListener = unlisten;
+        else unlisten();
+      })
+      .catch(reportError);
+    return () => {
+      active = false;
+      removeListener?.();
+    };
+  }, [reportError, save]);
 
   useEffect(() => {
     const flush = () => {
@@ -196,11 +313,11 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const current = snapshotRef.current;
       const entry = current.queue.find((item) => item.id === id);
       const track = current.tracks.find((item) => item.id === entry?.trackId);
-      if (!entry || !track) {
+      if (!entry || (!track && !isNative())) {
         reportError('This queue item is no longer in the library.');
         return;
       }
-      if (!track.path || track.missing) {
+      if (track && (!track.path || track.missing)) {
         reportError('This file is unavailable. Import its folder again to reconnect it.');
         return;
       }
@@ -218,12 +335,21 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
       update((value) => ({ ...value, session: { ...value.session, currentQueueId: id, position } }));
       void run(async () => {
         if (request !== generation.current) return;
-        await invoke('play_file', { path: track.path, queueId: id });
+        const playing = parseTrack(await native.playLibraryTrack(entry.trackId, id));
+        update((value) => ({
+          ...value,
+          tracks: mergeTracks(value.tracks, [
+            preserveUserMetadata(
+              playing,
+              value.tracks.find((track) => track.id === playing.id),
+            ),
+          ]),
+        }));
         if (request !== generation.current) return;
         activeIdRef.current = id;
         setActiveQueueId(id);
         requestedId.current = null;
-        if (position > 0 && (!track.duration || position < track.duration)) await invoke('seek_audio', { position });
+        if (position > 0 && (!playing.duration || position < playing.duration)) await native.seekAudio(position);
         setTransition((value) => value + 1);
         await refreshAudioInfo();
       });
@@ -234,13 +360,23 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const playById = useCallback(
     (id: string) => {
       const current = snapshotRef.current;
-      if (!current.tracks.some((track) => track.id === id)) {
+      if (!isNative() && !current.tracks.some((track) => track.id === id)) {
         reportError('Track not found in the library.');
         return;
       }
       const existing = current.queue.find((entry) => entry.trackId === id);
       if (existing) {
         playQueueEntry(existing.id);
+        return;
+      }
+      if (isNative()) {
+        void (async () => {
+          const ids = await native.libraryTrackIds(null);
+          if (!ids.includes(id)) throw new Error('This track is missing. Locate its file before playing.');
+          const queue = ids.map(queueEntry);
+          update((value) => ({ ...value, queue, session: { ...value.session, currentQueueId: null, position: 0 } }));
+          playQueueEntry(queue.find((entry) => entry.trackId === id)!.id);
+        })().catch(reportError);
         return;
       }
       const queue = current.tracks.filter((track) => !track.missing).map((track) => queueEntry(track.id));
@@ -336,10 +472,10 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
     void run(async () => {
       if (preloadKey.current !== key || request !== generation.current) return;
       await invoke('clear_pending');
-      if (next && track?.path && !track.missing && preloadKey.current === key && request === generation.current) {
+      if (next && !track?.missing && preloadKey.current === key && request === generation.current) {
         preloadedId.current = next.id;
         try {
-          await invoke('queue_next_file', { path: track.path, queueId: next.id });
+          await native.queueLibraryTrack(next.trackId, next.id);
         } catch (reason) {
           preloadedId.current = null;
           throw reason;
@@ -351,14 +487,18 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const enqueueTrack = useCallback(
     (id: string, next = false) => {
       update((current) => {
-        if (!current.tracks.some((track) => track.id === id)) return current;
+        if (!isNative() && !current.tracks.some((track) => track.id === id)) return current;
+        if (current.queue.length >= LIBRARY_LIMITS.maxQueueEntries) {
+          reportError(`The queue supports at most ${LIBRARY_LIMITS.maxQueueEntries} entries.`);
+          return current;
+        }
         const queue = [...current.queue];
         const index = next ? queue.findIndex((entry) => entry.id === current.session.currentQueueId) + 1 : queue.length;
         queue.splice(index, 0, queueEntry(id));
         return { ...current, queue };
       });
     },
-    [update],
+    [update, reportError],
   );
   const removeQueueEntry = useCallback(
     (id: string) => {
@@ -393,9 +533,15 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const removeTrack = useCallback(
     async (id: string) => {
+      if (isNative() && !(await save())) return;
       busy.current += 1;
       try {
-        if (isNative()) await invoke('library_remove_track', { trackId: id });
+        if (isNative()) {
+          const header = await native.libraryRemoveCatalog(id);
+          nativeSession.current.adopt(header, true);
+          setTotalTracks(header.trackCount);
+          setCatalogRevision(header.catalogRevision);
+        }
         const removedEntries = snapshotRef.current.queue.filter((entry) => entry.trackId === id);
         for (const entry of removedEntries) removeQueueEntry(entry.id);
         update((current) => ({
@@ -419,17 +565,47 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const addTracks = useCallback(
     (tracks: Track[]) => {
       try {
-        update((current) => ({ ...current, tracks: mergeTracks(current.tracks, tracks) }));
+        update((current) => {
+          if (!isNative()) return { ...current, tracks: mergeTracks(current.tracks, tracks) };
+          const byId = new Map(current.tracks.map((track) => [track.id, track]));
+          const incoming = new Set(tracks.map((track) => track.id));
+          const safe = tracks.map((track) => {
+            const old = byId.get(track.id);
+            return preserveUserMetadata(track, old);
+          });
+          return { ...current, tracks: [...current.tracks.filter((track) => !incoming.has(track.id)), ...safe] };
+        });
       } catch (reason) {
         reportError(reason);
       }
     },
     [update, reportError],
   );
+  const getTracks = useCallback(
+    async (ids: string[]) => {
+      if (!isNative()) return snapshotRef.current.tracks.filter((track) => ids.includes(track.id));
+      const result: Track[] = [];
+      for (let index = 0; index < ids.length; index += 500)
+        result.push(...(await native.libraryTracks(ids.slice(index, index + 500))).map(parseTrack));
+      addTracks(result);
+      return result;
+    },
+    [addTracks],
+  );
+  const queryCatalog = useCallback(
+    async (query: Partial<CatalogQuery>) => {
+      if (!isNative()) return { tracks: snapshotRef.current.tracks, total: snapshotRef.current.tracks.length };
+      const page = await native.libraryPage(catalogQuery(query));
+      const tracks = page.tracks.map(parseTrack);
+      addTracks(tracks);
+      return { tracks, total: page.total };
+    },
+    [addTracks],
+  );
   const repairTrack = useCallback(
     async (id: string) => {
       if (!isNative()) throw new Error('Locate files in the desktop app.');
-      await save();
+      if (!(await save())) throw new Error('Save your pending changes before locating a file.');
       busy.current += 1;
       try {
         const result = await invoke<unknown>('library_locate_track', { trackId: id });
@@ -450,11 +626,14 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
         reportError('Open the desktop app to import files and folders.');
         return;
       }
+      if (!(await save())) return;
       busy.current += 1;
       try {
-        const tracks = await invoke<unknown>('library_import_paths', { paths });
-        if (!Array.isArray(tracks)) throw new Error('The library returned an invalid import response.');
-        addTracks(tracks.map(parseTrack));
+        const header = await native.libraryImportCatalog(paths);
+        nativeSession.current.adopt(header, true);
+        addTracks(header.initialTracks.map(parseTrack));
+        setTotalTracks(header.trackCount);
+        setCatalogRevision(header.catalogRevision);
         setError(null);
       } catch (reason) {
         reportError(reason);
@@ -470,6 +649,29 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
       reportError('Use Import files or Import folder in the desktop app so the original file paths can be preserved.');
     },
     [reportError],
+  );
+  const pickMusic = useCallback(
+    async (folder: boolean) => {
+      if (!isNative()) {
+        reportError('Open the desktop app to import your music.');
+        return;
+      }
+      if (!(await save())) return;
+      busy.current += 1;
+      try {
+        const header = await native.pickMusicCatalog(folder);
+        nativeSession.current.adopt(header, true);
+        addTracks(header.initialTracks.map(parseTrack));
+        setTotalTracks(header.trackCount);
+        setCatalogRevision(header.catalogRevision);
+      } catch (reason) {
+        reportError(reason);
+      } finally {
+        busy.current -= 1;
+        void save();
+      }
+    },
+    [addTracks, reportError, save],
   );
 
   const shuffleQueue = useCallback(() => {
@@ -501,12 +703,15 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const createPlaylist = useCallback(
     (name: string, trackIds: string[] = [], smartRule?: SmartRule) => {
       if (!name.trim() || name.length > 256) throw new Error('Choose a playlist name between 1 and 256 characters.');
+      if (snapshotRef.current.playlists.length >= LIBRARY_LIMITS.maxPlaylists)
+        throw new Error(`The library supports at most ${LIBRARY_LIMITS.maxPlaylists} playlists.`);
+      if (trackIds.length > LIBRARY_LIMITS.maxPlaylistTracks) throw new Error('The playlist exceeds the supported track limit.');
       const id = crypto.randomUUID();
       const existing = new Set(snapshotRef.current.tracks.map((track) => track.id));
       const playlist: Playlist = {
         id,
         name: name.trim(),
-        trackIds: trackIds.filter((trackId) => existing.has(trackId)),
+        trackIds: isNative() ? trackIds : trackIds.filter((trackId) => existing.has(trackId)),
         smartRule: parseSmartRule(smartRule),
         createdAt: Date.now(),
       };
@@ -518,6 +723,8 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const updatePlaylist = useCallback(
     (id: string, changes: Partial<Pick<Playlist, 'name' | 'trackIds' | 'smartRule'>>) => {
       if (changes.name !== undefined && (!changes.name.trim() || changes.name.length > 256)) throw new Error('Invalid playlist name.');
+      if (changes.trackIds && changes.trackIds.length > LIBRARY_LIMITS.maxPlaylistTracks)
+        throw new Error('The playlist exceeds the supported track limit.');
       const existing = new Set(snapshotRef.current.tracks.map((track) => track.id));
       update((current) => ({
         ...current,
@@ -527,7 +734,11 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 ...playlist,
                 ...changes,
                 name: changes.name?.trim() ?? playlist.name,
-                trackIds: changes.trackIds?.filter((trackId) => existing.has(trackId)) ?? playlist.trackIds,
+                trackIds: changes.trackIds
+                  ? isNative()
+                    ? changes.trackIds
+                    : changes.trackIds.filter((trackId) => existing.has(trackId))
+                  : playlist.trackIds,
                 smartRule: 'smartRule' in changes ? parseSmartRule(changes.smartRule) : playlist.smartRule,
               }
             : playlist,
@@ -547,6 +758,17 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, []);
   const playPlaylist = useCallback(
     (id: string) => {
+      if (isNative()) {
+        void (async () => {
+          if (!(await save())) return;
+          const ids = await native.libraryTrackIds(id);
+          if (!ids.length) throw new Error('This playlist has no available tracks.');
+          const queue = ids.map(queueEntry);
+          update((current) => ({ ...current, queue, session: { ...current.session, currentQueueId: null, position: 0 } }));
+          playQueueEntry(queue[0].id);
+        })().catch(reportError);
+        return;
+      }
       const tracks = getPlaylistTracks(id).filter((track) => !track.missing);
       if (!tracks.length) {
         reportError('This playlist has no available tracks.');
@@ -556,23 +778,28 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
       update((current) => ({ ...current, queue, session: { ...current.session, currentQueueId: null, position: 0 } }));
       playQueueEntry(queue[0].id);
     },
-    [getPlaylistTracks, playQueueEntry, reportError, update],
+    [getPlaylistTracks, playQueueEntry, reportError, update, save],
   );
 
   const exportLibrary = useCallback(async () => {
-    await save();
+    if (!(await save())) throw new Error('Save your pending library changes before exporting.');
     return isNative() ? invoke<string>('library_export') : JSON.stringify(parseLibrarySnapshot(snapshotRef.current), null, 2);
   }, [save]);
   const restoreLibrary = useCallback(
     async (backup: string) => {
-      if (backup.length > 64 * 1024 * 1024) throw new Error('This backup exceeds the 64 MB import limit.');
+      if (new TextEncoder().encode(backup).byteLength > LIBRARY_LIMITS.maxBackupBytes)
+        throw new Error('This backup exceeds the 64 MiB import limit.');
       const validated = parseLibrarySnapshot(JSON.parse(backup));
       busy.current += 1;
       try {
         await writes.current;
-        const restored = isNative()
-          ? parseLibrarySnapshot(await invoke('library_restore', { backup: JSON.stringify(validated) }))
-          : validated;
+        let restored = validated;
+        if (isNative()) {
+          const header = await native.libraryRestoreCatalog(JSON.stringify(validated));
+          restored = nativeSession.current.adopt(header);
+          setTotalTracks(header.trackCount);
+          setCatalogRevision(header.catalogRevision);
+        }
         stop();
         update(() => restored);
         readyRef.current = true;
@@ -586,10 +813,27 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
     [save, stop, update],
   );
   const refreshLibrary = useCallback(async () => {
+    if (isNative() && !(await save())) return;
     busy.current += 1;
     try {
-      const result = isNative() ? parseLibrarySnapshot(await invoke('library_reconcile')) : loadBrowserLibrary();
-      update((current) => (readyRef.current ? { ...current, tracks: result.tracks, watchedFolders: result.watchedFolders } : result));
+      const header = isNative() ? await native.libraryReconcileCatalog() : null;
+      const result = header ? nativeSession.current.adopt(header, true) : loadBrowserLibrary();
+      if (header) {
+        setTotalTracks(header.trackCount);
+        setCatalogRevision(header.catalogRevision);
+      }
+      update((current) => {
+        if (!readyRef.current) return result;
+        const dirty = nativeSession.current.dirtyTrackIds;
+        const pending = new Map(current.tracks.filter((track) => dirty.has(track.id)).map((track) => [track.id, track]));
+        const fresh = result.tracks.map((track) => preserveUserMetadata(track, pending.get(track.id)));
+        const loaded = new Set(fresh.map((track) => track.id));
+        return {
+          ...current,
+          tracks: [...fresh, ...[...pending.values()].filter((track) => !loaded.has(track.id))],
+          watchedFolders: result.watchedFolders,
+        };
+      });
       readyRef.current = true;
       setReady(true);
       setError(null);
@@ -675,7 +919,8 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
       }
       const position = Number.isFinite(event.current_time) ? Math.max(0, event.current_time) : 0;
-      if (Math.abs(position - snapshotRef.current.session.position) >= 5 || !event.is_playing) {
+      const difference = Math.abs(position - snapshotRef.current.session.position);
+      if (difference >= 5 || (!event.is_playing && (difference > 0 || listened > 0))) {
         const seconds = listened;
         listened = 0;
         update((current) => ({
@@ -691,26 +936,29 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
     });
     void attach<ScanProgress>('library_scan_progress', setScanProgress);
     void attach<string>('library_error', (message) => setError(message));
-    void attach<unknown>('library_changed', (payload) => {
-      try {
-        const changed = parseLibrarySnapshot(payload);
-        if (readyRef.current)
-          update((current) => ({
-            ...current,
-            tracks: mergeTracks(current.tracks, changed.tracks),
-            watchedFolders: changed.watchedFolders,
-          }));
-      } catch (reason) {
-        reportError(reason);
-      }
-    });
+    void events.catalogChanged
+      .listen(({ payload }) => {
+        if (!active) return;
+        setTotalTracks(payload.trackCount);
+        nativeSession.current.catalogRevision = Math.max(nativeSession.current.catalogRevision, payload.revision);
+        setCatalogRevision((value) => Math.max(value, payload.revision));
+        // Refresh only visible/current cached metadata after a background catalog change.
+        const selected = snapshotRef.current.queue.find((entry) => entry.id === snapshotRef.current.session.currentQueueId);
+        if (selected) void getTracks([selected.trackId]).catch(reportError);
+      })
+      .then((unlisten) => {
+        if (active) cleanups.push(unlisten);
+        else unlisten();
+      })
+      .catch(reportError);
+    void attach<unknown>('media_stop', stop);
     void attach<unknown>('media_next', handleNext);
     void attach<unknown>('media_prev', () => handlePrev(snapshotRef.current.session.position));
     return () => {
       active = false;
       cleanups.forEach((cleanup) => cleanup());
     };
-  }, [handleNext, handlePrev, playQueueEntry, reportError, update]);
+  }, [handleNext, handlePrev, playQueueEntry, reportError, update, getTracks, stop]);
 
   const dispatch = useCallback(
     (action: LibraryAction) => {
@@ -769,12 +1017,25 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
   );
   const selected = snapshot.queue.find((entry) => entry.id === snapshot.session.currentQueueId);
   const currentTrack = selected ? byId.get(selected.trackId) : undefined;
+  const suggestionSource = currentTrack?.id;
+  const suggestionBpm = currentTrack?.analysis?.bpm;
+  useEffect(() => {
+    if (!isNative() || !ready || !suggestionSource) return;
+    void queryCatalog({
+      limit: 200,
+      ...(suggestionBpm ? { minBpm: Math.max(20, suggestionBpm * 0.92), maxBpm: Math.min(400, suggestionBpm * 1.08) } : {}),
+    }).catch(reportError);
+  }, [ready, suggestionSource, suggestionBpm, queryCatalog, reportError]);
   const duplicateGroups = useMemo(() => findDuplicateTracks(tracks), [tracks]);
   const suggestions = useMemo(() => suggestQueue(tracks, snapshot.queue, currentTrack), [tracks, snapshot.queue, currentTrack]);
 
   return (
     <LibraryContext.Provider
       value={{
+        totalTracks: isNative() ? totalTracks : tracks.length,
+        catalogRevision,
+        queryCatalog,
+        getTracks,
         state: {
           tracks,
           currentTrackIndex: tracks.findIndex((track) => track.id === currentTrack?.id),
@@ -787,6 +1048,7 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
         dispatch,
         processFiles,
         importPaths,
+        pickMusic,
         addTracks,
         handleNext,
         handlePrev,

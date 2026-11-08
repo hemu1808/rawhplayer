@@ -36,11 +36,8 @@ impl FolderWatcher {
                                         .extension()
                                         .and_then(|ext| ext.to_str())
                                         .map(|ext| {
-                                            [
-                                                "mp3", "flac", "wav", "ogg", "aac", "m4a", "aiff",
-                                                "aif", "opus",
-                                            ]
-                                            .contains(&ext.to_ascii_lowercase().as_str())
+                                            crate::library_contract::AUDIO_EXTENSIONS
+                                                .contains(&ext.to_ascii_lowercase().as_str())
                                         })
                                         .unwrap_or(false)
                             })
@@ -108,7 +105,7 @@ impl FolderWatcher {
                 // Clear before scanning: changes during the scan schedule another pass.
                 dirty.store(false, Ordering::Release);
                 match library.reconcile(|progress| { let _ = app.emit("library_scan_progress", progress); }) {
-                    Ok(snapshot) => { let _ = app.emit("library_changed", snapshot); }
+                    Ok(_) => { crate::library::catalog::notify(&app); }
                     Err(error) => {
                         // A picker/manual scan may already hold the scan lock. Retry
                         // once the worker wakes, without losing the filesystem change.
@@ -134,6 +131,7 @@ impl Drop for FolderWatcher {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn start_watching(path: String, app_handle: AppHandle) -> Result<(), String> {
     app_handle
         .state::<crate::library::NativeLibrary>()
@@ -143,6 +141,7 @@ pub fn start_watching(path: String, app_handle: AppHandle) -> Result<(), String>
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn stop_watching(app_handle: AppHandle) -> Result<(), String> {
     app_handle
         .state::<crate::library::NativeLibrary>()
@@ -152,6 +151,7 @@ pub fn stop_watching(app_handle: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn remove_watched_folder(path: String, app_handle: AppHandle) -> Result<(), String> {
     app_handle
         .state::<crate::library::NativeLibrary>()
@@ -161,6 +161,7 @@ pub fn remove_watched_folder(path: String, app_handle: AppHandle) -> Result<(), 
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn get_watched_folders(app_handle: AppHandle) -> Result<Vec<String>, String> {
     app_handle
         .state::<crate::library::NativeLibrary>()
@@ -168,6 +169,7 @@ pub fn get_watched_folders(app_handle: AppHandle) -> Result<Vec<String>, String>
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn pick_watched_folder(app: AppHandle) -> Result<Vec<String>, String> {
     use tauri_plugin_dialog::DialogExt;
     tauri::async_runtime::spawn_blocking(move || {

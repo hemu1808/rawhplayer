@@ -6,6 +6,7 @@ pub struct DesktopState(Mutex<Option<WindowGeometry>>);
 type WindowGeometry = (PhysicalSize<u32>, PhysicalPosition<i32>, bool);
 
 #[tauri::command]
+#[specta::specta]
 pub fn set_compact_mode(app: tauri::AppHandle, compact: bool) -> Result<(), String> {
     let window = app
         .get_webview_window("main")
@@ -95,7 +96,13 @@ pub fn install_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             "compact" => {
                 let _ = set_compact_mode(app.clone(), true);
             }
-            "quit" => app.exit(0),
+            "quit" => {
+                // Use the same close event as the title bar so the UI can flush
+                // durable edits before the last window is destroyed.
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.close();
+                }
+            }
             _ => (),
         });
     if let Some(icon) = app.default_window_icon() {
