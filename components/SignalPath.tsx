@@ -18,6 +18,7 @@ export function SignalPath() {
         <li>
           <p className="text-neutral-400">Processing</p>
           <p>{info?.is_purist ? 'EQ bypassed' : 'Equalizer'}</p>
+          <p>{info?.resampler || 'Conversion status unavailable'}</p>
           <p>
             {info?.normalization || 'off'} ReplayGain · {info?.playback_rate || 1}×
           </p>

@@ -1,0 +1,52 @@
+{
+  "date": "2026-11-07",
+  "sourceCommit": "628f382fb44fe8702fbbb0a853e72a0da66d7d21",
+  "canonical": "D:\\repos\\rawhplayer",
+  "removed": [
+    "C:\\Users\\hemu1\\rawhplayer-implementation",
+    "C:\\Users\\hemu1\\rawhplayer-audit-20261021",
+    "C:\\Users\\hemu1\\rawhplayer-launch-review-2026-10-27"
+  ],
+  "retained": ["C:\\Users\\hemu1\\rawh-tools"],
+  "branchRetained": "codex/rawh-launch-readiness",
+  "before": {
+    "implementationBytes": 17635437785,
+    "auditBytes": 2960883,
+    "launchBytes": 2939696,
+    "oldDependencyBytes": 184670688,
+    "copiedDependencyBytes": 243145473
+  },
+  "archives": [
+    {
+      "name": "audit-2026-10-21.zip",
+      "bytes": 1001524,
+      "sha256": "832eb589892d00eaa310ba27741ffe8150596927e6ed40f14c0e55408e331249"
+    },
+    {
+      "name": "implementation-inventories-2026-10-28.zip",
+      "bytes": 120255,
+      "sha256": "bca0298486a796e1c439e71e5a1466859b2a947e209edd61f8f995c5ba125ac7"
+    },
+    {
+      "name": "launch-review-2026-10-27.zip",
+      "bytes": 1549120,
+      "sha256": "3eb3fd1faa18bd4a55c61cbaf34bef9120c8433ebaa833da27aeb3bc5cabce0f"
+    },
+    {
+      "name": "review-reproductions-2026-11-07.zip",
+      "bytes": 1480,
+      "sha256": "2cd36d0dcf8ca841e05eda73fdf47563058ef60d1a2a54674f13df18987dda68"
+    }
+  ],
+  "estimatedNetReclaimedBytes": 17580191200,
+  "accounting": "Logical file lengths; excludes small reports/manifests and filesystem allocation/compression differences.",
+  "checks": {
+    "canonicalNpmCheck": "passed",
+    "frontendTests": 43,
+    "releaseTests": 4,
+    "nativeTests": 28,
+    "browserTests": 5,
+    "diagnosticReproductions": 2,
+    "canonicalFormatCheck": "87 existing CRLF/LF-only differences; zero other formatting differences"
+  }
+}

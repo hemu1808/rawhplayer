@@ -16,6 +16,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2.7.4", features = [] }
+serde_json = "1.0"
 
 [dependencies]
 serde_json = "1.0"
@@ -26,7 +27,6 @@ tauri-plugin-log = "2"
 symphonia = { version = "0.5.4", features = ["all"] }
 rustfft = "6.4.1"
 parking_lot = "0.12.5"
-rodio = { version = "0.19.0", features = ["symphonia-all"] }
 reqwest = { version = "0.12", features = ["json"] }
 cpal = "0.15"
 lofty = "0.22"
@@ -42,6 +42,12 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 sha2 = "0.10"
 base64 = "0.22"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+rubato = { version = "=5.0.1", default-features = false }
+souvlaki = "=0.9.3"
+ebur128 = "=0.1.11"
+specta = { version = "=2.0.0-rc.22", features = ["derive", "serde_json"] }
+specta-typescript = "=0.0.9"
+tauri-specta = { version = "=2.0.0-rc.21", features = ["derive", "typescript"] }
 
 [profile.release]
 opt-level = 3

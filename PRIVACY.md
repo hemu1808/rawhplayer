@@ -1,12 +1,16 @@
 # RawhPlayer privacy information
 
-Updated October 28, 2026. This describes the implementation branch; deployed releases may differ.
+Updated November 8, 2026. This describes the implementation branch; deployed releases may differ.
 
 ## Local data
 
 The native app stores music metadata, absolute file paths, favorites, play counts, listening time, queues, playlists, watched-folder settings and selected-path grants in SQLite. Artwork, waveform data and metadata-edit recovery copies are stored in the application's data directory. Audio remains in its original location unless you explicitly edit its metadata.
 
-Theme, playback preferences, EQ/volume profiles keyed by output-device name and some listening statistics use webview localStorage. Local queue suggestions use favorites, play counts, artist and genre without a network request. The previous browser library is retained after migration for recovery. Clearing localStorage does not delete the native database or credentials.
+Database upgrades can retain consistent SQLite recovery copies in the same directory, including metadata and selected-path grants. Existing version-1 and version-2 databases receive `library-v1-backup-<timestamp>.sqlite3` or `library-v2-backup-<timestamp>.sqlite3` before upgrade. These copies do not contain audio or integration credentials and are not uploaded automatically.
+
+Opt-in local analysis stores a SHA-256 content hash, source modification marker, loudness, true peak, RMS energy, tempo/key estimates and confidence values in SQLite. A cancellable local worker reads audio without uploading or modifying it. OS media sessions share the current track's metadata, artwork and playback position with operating-system media controls.
+
+Theme, playback preferences, EQ/volume profiles keyed by output-device name and some listening statistics use webview localStorage. Queue suggestions use available local analysis, favorites, play counts, artist and genre without a network request. The previous browser library is retained after migration for recovery. Clearing localStorage does not delete the native database or credentials.
 
 Integration keys use the operating system credential store. The webview can save/delete a key and query its presence, but cannot retrieve a stored key through the app's IPC commands. Saving or deleting the Gemini key also removes the old localStorage key.
 

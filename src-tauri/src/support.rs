@@ -1,13 +1,14 @@
 //! Credentials never cross back into the webview or diagnostic exports.
 use serde::Serialize;
 use tauri::Manager;
-#[derive(Serialize)]
+#[derive(Serialize, specta::Type)]
 pub struct UpdateStatus {
     pub enabled: bool,
     managed: bool,
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn update_status(app: tauri::AppHandle) -> UpdateStatus {
     let managed = std::env::var("RAWH_DISABLE_UPDATES").is_ok_and(|value| value == "1")
         || !app.state::<crate::policy::Policy>().allow_updates;
@@ -27,7 +28,7 @@ pub fn update_status(app: tauri::AppHandle) -> UpdateStatus {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, specta::Type)]
 pub struct CredentialStatus {
     gemini: bool,
     youtube: bool,
@@ -45,6 +46,7 @@ pub fn read_credential(service: &str) -> Result<String, String> {
         .map_err(|_| "Configure this integration in Settings first".into())
 }
 #[tauri::command]
+#[specta::specta]
 pub fn credential_status() -> CredentialStatus {
     CredentialStatus {
         gemini: read_credential("gemini").is_ok(),
@@ -52,6 +54,7 @@ pub fn credential_status() -> CredentialStatus {
     }
 }
 #[tauri::command]
+#[specta::specta]
 pub fn credential_set(service: String, key: String) -> Result<(), String> {
     if key.trim().is_empty() || key.len() > 4096 || key.chars().any(char::is_control) {
         return Err("Enter a valid API key".into());
@@ -61,6 +64,7 @@ pub fn credential_set(service: String, key: String) -> Result<(), String> {
         .map_err(|_| "Could not save the credential".into())
 }
 #[tauri::command]
+#[specta::specta]
 pub fn credential_delete(service: String) -> Result<(), String> {
     match entry(&service)?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
@@ -68,6 +72,7 @@ pub fn credential_delete(service: String) -> Result<(), String> {
     }
 }
 #[tauri::command]
+#[specta::specta]
 pub fn diagnostics_export(app: tauri::AppHandle) -> String {
     let audio = app
         .state::<Option<crate::audio_engine::AudioEngine>>()

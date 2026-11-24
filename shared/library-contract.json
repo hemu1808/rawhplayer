@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "maxTracks": 250000,
+  "maxQueueEntries": 250000,
+  "maxPlaylistTracks": 250000,
+  "maxPlaylists": 10000,
+  "maxWatchedFolders": 1000,
+  "maxBackupBytes": 67108864,
+  "audioExtensions": ["mp3", "flac", "wav", "ogg", "aac", "m4a", "aiff", "aif"]
+}

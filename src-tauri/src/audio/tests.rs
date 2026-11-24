@@ -124,3 +124,60 @@ fn crossfade_overlaps_tracks_with_bounded_finite_output() {
     assert!(samples.iter().any(|x| *x > 0.35));
     assert_eq!(pipe.clipping, 0);
 }
+
+#[test]
+fn sinc_conversion_rejects_aliasing_and_preserves_duration() {
+    fn converted(frequency: f64) -> Vec<f32> {
+        let samples = (0..48_000)
+            .map(|index| {
+                (16000.0 * (std::f64::consts::TAU * frequency * index as f64 / 48000.0).sin())
+                    as i16
+            })
+            .collect::<Vec<_>>();
+        let wav = Wav::new(&samples);
+        let mut track = wav.track("resample");
+        let mut result = Vec::new();
+        while let Some(frame) = track.render(24_000, 1, 1.0).unwrap() {
+            result.push(frame[0]);
+            assert!(result.len() <= 24_001);
+        }
+        assert_eq!(result.len(), 24_000);
+        result
+    }
+    let pass = converted(1000.0);
+    let stop = converted(18000.0);
+    let rms = |data: &[f32]| {
+        (data[512..data.len() - 512]
+            .iter()
+            .map(|value| f64::from(*value).powi(2))
+            .sum::<f64>()
+            / (data.len() - 1024) as f64)
+            .sqrt()
+    };
+    assert!(rms(&pass) > 0.3);
+    assert!(
+        rms(&stop) < rms(&pass) * 0.001,
+        "Stop-band tone must be attenuated by at least 60 dB"
+    );
+}
+
+#[test]
+fn sinc_short_tracks_seek_and_speed_have_no_padding_or_stale_frames() {
+    let wav = Wav::new(&vec![8192; 1001]);
+    for (rate, speed) in [(44100, 1.0), (96000, 1.5), (24000, 0.75)] {
+        let mut track = wav.track("short");
+        let mut count = 0;
+        while let Some(frame) = track.render(rate, 2, speed).unwrap() {
+            assert!(frame[..2].iter().all(|value| value.is_finite()));
+            count += 1;
+            assert!(count < 5000);
+        }
+        let expected = (1001.0 / 48000.0 * rate as f64 / f64::from(speed)).ceil() as usize;
+        assert_eq!(count, expected);
+        track.seek(500.0 / 48000.0).unwrap();
+        let sample = track.render(rate, 1, speed).unwrap().unwrap()[0];
+        assert!((0.1..0.4).contains(&sample));
+        assert!(track.render(0, 1, 1.0).is_err());
+        assert!(track.render(rate, 1, f32::NAN).is_err());
+    }
+}

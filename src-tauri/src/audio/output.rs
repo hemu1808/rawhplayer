@@ -65,14 +65,31 @@ pub fn list_devices() -> Result<Vec<AudioDeviceInfo>, String> {
     let devices = host
         .output_devices()
         .map_err(|e| format!("Cannot list output devices: {e}"))?;
+    let mut seen = std::collections::HashSet::new();
     Ok(devices
         .filter_map(|device| device.name().ok())
+        .filter(|name| seen.insert(name.clone()))
         .map(|name| AudioDeviceInfo {
             id: name.clone(),
             is_default: default_name.as_ref() == Some(&name),
             name,
         })
         .collect())
+}
+
+fn unique_device_index(names: &[String], selected: &str) -> Result<usize, String> {
+    let mut matches = names
+        .iter()
+        .enumerate()
+        .filter(|(_, name)| name.as_str() == selected);
+    let first = matches
+        .next()
+        .map(|(index, _)| index)
+        .ok_or("No matching audio output device is connected")?;
+    if matches.next().is_some() {
+        return Err("Multiple output devices have this name. Rename them in system settings or select the system default output.".into());
+    }
+    Ok(first)
 }
 
 pub fn open(
@@ -82,9 +99,17 @@ pub fn open(
 ) -> Result<OutputDevice, String> {
     let host = cpal::default_host();
     let device = if let Some(name) = selected {
-        host.output_devices()
+        let mut devices: Vec<_> = host
+            .output_devices()
             .map_err(|e| format!("Cannot list output devices: {e}"))?
-            .find(|d| d.name().ok().as_deref() == Some(name))
+            .filter_map(|device| device.name().ok().map(|name| (device, name)))
+            .collect();
+        let names = devices
+            .iter()
+            .map(|(_, name)| name.clone())
+            .collect::<Vec<_>>();
+        let index = unique_device_index(&names, name)?;
+        Some(devices.swap_remove(index).0)
     } else {
         host.default_output_device()
     }
@@ -266,6 +291,56 @@ fn build<T: SizedSample + FromSample<f32>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn named_output_must_be_unambiguous() {
+        let names = vec!["Speakers".into(), "USB DAC".into(), "USB DAC".into()];
+        assert_eq!(unique_device_index(&names, "Speakers").unwrap(), 0);
+        assert!(unique_device_index(&names, "USB DAC")
+            .unwrap_err()
+            .contains("Multiple"));
+        assert!(unique_device_index(&names, "Disconnected").is_err());
+    }
+
+    #[test]
+    #[ignore = "requires an available physical output device; emits digital silence only"]
+    fn hardware_output_smoke() {
+        let signals = Arc::new(OutputSignals::default());
+        let (send_notices, _notices) = sync_channel(128);
+        let output = open(None, signals.clone(), send_notices).expect("open system default output");
+        signals.playing.store(true, Ordering::Release);
+        for serial in 1..=8 {
+            output
+                .sender
+                .send(AudioBlock {
+                    generation: 1,
+                    serial,
+                    samples: vec![0.0; BLOCK_FRAMES * output.channels],
+                    position: (serial - 1) as f64 * BLOCK_FRAMES as f64 / output.sample_rate as f64,
+                    seconds_per_frame: 1.0 / output.sample_rate as f64,
+                    notices: Default::default(),
+                    finishes: serial == 8,
+                })
+                .unwrap();
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while signals.playing.load(Ordering::Acquire) && std::time::Instant::now() < deadline {
+            while output.retired.try_recv().is_ok() {}
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(
+            signals.serial.load(Ordering::Acquire),
+            8,
+            "hardware callback consumed the final block"
+        );
+        assert!(!signals.device_failed.load(Ordering::Acquire));
+        println!(
+            "Silent hardware output passed: {} Hz, {} channels, {}, {} underruns",
+            output.sample_rate,
+            output.channels,
+            output.sample_format,
+            signals.underruns.load(Ordering::Relaxed)
+        );
+    }
     #[test]
     fn exhausted_blocks_stay_owned_until_worker_can_reclaim_them() {
         let (_sender, receiver) = sync_channel(2);

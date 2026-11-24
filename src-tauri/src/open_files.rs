@@ -15,7 +15,7 @@ fn audio_paths(paths: impl IntoIterator<Item = PathBuf>) -> Vec<String> {
             .extension()
             .and_then(|value| value.to_str())
             .is_some_and(|value| {
-                ["mp3", "flac", "wav", "ogg", "aac", "m4a", "aiff"]
+                crate::library_contract::AUDIO_EXTENSIONS
                     .contains(&value.to_ascii_lowercase().as_str())
             });
         if !supported {
@@ -59,6 +59,7 @@ pub fn queue_arguments(app: &tauri::AppHandle, args: Vec<String>, cwd: &Path) {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn take_open_files(
     app: tauri::AppHandle,
 ) -> Result<Vec<crate::library::LibraryTrack>, String> {
@@ -69,7 +70,9 @@ pub async fn take_open_files(
         }
         let library = app.state::<crate::library::NativeLibrary>();
         library.authorize_paths(&paths)?;
-        library.import_paths(paths)
+        let imported = library.import_paths(paths)?;
+        crate::library::catalog::notify(&app);
+        Ok(imported)
     })
     .await
     .map_err(|error| error.to_string())?

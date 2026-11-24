@@ -3,13 +3,17 @@ import { Track } from '../types';
 import { Search, Play, FileAudio, Video as Youtube, Library } from 'lucide-react';
 import { ScrollArea } from '../components/ScrollArea';
 import { searchYouTube } from '../services/youtubeService';
+import { NativeCatalogPage } from '../components/NativeCatalogPage';
 
 interface SearchPageProps {
   tracks: Track[];
   onPlay: (track: Track) => void;
 }
 
-export const SearchPage: React.FC<SearchPageProps> = ({ tracks, onPlay }) => {
+export const SearchPage: React.FC<SearchPageProps> = (props) =>
+  window.__TAURI_INTERNALS__ ? <NativeCatalogPage onPlay={props.onPlay} search /> : <BrowserSearchPage {...props} />;
+
+const BrowserSearchPage: React.FC<SearchPageProps> = ({ tracks, onPlay }) => {
   const [query, setQuery] = useState('');
   const [sourceMode, setSourceMode] = useState<'local' | 'youtube'>('local');
   const [ytResults, setYtResults] = useState<Track[]>([]);

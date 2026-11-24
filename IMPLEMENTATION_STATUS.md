@@ -1,6 +1,20 @@
 # RawhPlayer implementation checkpoint — 2026-10-28
 
-Worktree: `C:/Users/hemu1/rawhplayer-implementation`.
+## Current feature checkpoint - 2026-11-08
+
+Canonical checkout: `D:/repos/rawhplayer`, branch `update/Features`. The user authorized the November repairs and implementation of the first five modernization improvements. No commit, push or public release is part of this task.
+
+Delivered: paged native catalog/search/grouping and revisioned incremental saves; Rubato sinc conversion; generated command/core-event contracts; OS media sessions; cancellable local loudness/tempo/key/energy analysis and richer queue suggestions. The earlier persistence, close lifecycle, limits, dependency, FTS and cleanup repairs remain. SQLite version 3 upgrades older libraries with a consistent recovery copy. Historical product plans remain under `docs/history/`.
+
+The 100k synthetic benchmark measured a 201-byte favorite patch at 3.3 ms versus 2.26 s for the compatibility snapshot save. Bootstrap returned about 55 kB in 114 ms. These are local unoptimized storage/serialization measurements, not hardware or UI guarantees.
+
+Current verification and exact totals are recorded in [VALIDATION.md](docs/VALIDATION.md). The isolated Windows desktop check exercises import/playback, paged search, local analysis, media transport events and close/restart persistence. Fresh npm audit has zero findings; Rust audit has zero vulnerability errors and seven unsuppressed upstream warnings.
+
+See [feature implementation and limitations](docs/FEATURES_2026-11-08.md), [benchmark data](docs/benchmarks/features-2026-11-08.json) and [remaining roadmap](docs/MODERNIZATION.md). Real signing identities, clean-machine release acceptance, codec/device/sleep/hotplug matrices, macOS/Linux execution and manual accessibility/system-media presentation remain separate release gates.
+
+## October implementation checkpoint (historical)
+
+Former worktree: `C:/Users/hemu1/rawhplayer-implementation`.
 Branch: `codex/rawh-launch-readiness`, based on `1617b9c`.
 Implementation was developed in an isolated worktree. The user authorized integration and push to `main`; publishing a signed public release is a separate operation.
 
@@ -42,7 +56,7 @@ The user's implementation request supersedes the historical proposal-only restri
 ## Required work still outstanding
 
 1. Installed-app and real audio-device validation: import/play/seek, transition timing, rapid selection, clear/remove/reorder while playing, sleep/resume, unplug/replug and default-device changes. Generated fixtures do not prove hardware journeys or actual filesystem-notifier behavior.
-2. Broader audio-worker stress/hardware review: timeout races during active operations, decoder-ahead buffering/device changes, resampling quality and queue-boundary races. The current resampler uses linear interpolation. Disconnect recovery needs hardware validation.
+2. Broader audio-worker stress/hardware review: timeout races during active operations, decoder-ahead buffering/device changes and queue-boundary races. This October checkpoint used linear interpolation; the November feature work replaces it with tested Rubato sinc conversion. Disconnect recovery still needs hardware validation.
 3. Broader process-termination/external-file fault testing, OS file-association launch testing on all supported platforms, system media-session metadata integration, full keyboard/focus/contrast review and measured large-library performance. No accessibility compliance claim is made.
 4. Configure real updater/publisher signing secrets, verify the signing key pair and all platform artifacts, run notarization and clean-machine update/recovery tests. No signing identity or secret has been invented. See [release runbook](docs/RELEASING.md).
 5. Review declared dependency licenses and the seven upstream warnings; verify generated inventories/checksums and hosted provenance for real release artifacts. Central policy distribution, SSO and cloud-based organization management are not implemented.

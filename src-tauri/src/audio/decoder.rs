@@ -256,9 +256,7 @@ pub struct ResampledTrack {
     pub decoder: MediaDecoder,
     pub queue_id: String,
     pub position: f64,
-    left: Option<Frame>,
-    right: Option<Frame>,
-    fraction: f64,
+    resampler: Option<super::resampler::SincStream>,
 }
 
 impl ResampledTrack {
@@ -268,17 +266,13 @@ impl ResampledTrack {
             decoder,
             queue_id,
             position: 0.0,
-            left: None,
-            right: None,
-            fraction: 0.0,
+            resampler: None,
         })
     }
 
     pub fn seek(&mut self, position: f64) -> Result<(), String> {
         self.decoder.seek(position)?;
-        self.left = None;
-        self.right = None;
-        self.fraction = 0.0;
+        self.resampler = None;
         self.position = position;
         Ok(())
     }
@@ -289,31 +283,46 @@ impl ResampledTrack {
         output_channels: usize,
         speed: f32,
     ) -> Result<Option<Frame>, String> {
-        if self.left.is_none() {
-            self.left = self.decoder.next_frame()?;
-            self.right = self.decoder.next_frame()?;
+        if output_rate == 0
+            || output_rate > 768_000
+            || !(1..=MAX_CHANNELS).contains(&output_channels)
+            || !speed.is_finite()
+            || !(0.25..=4.0).contains(&speed)
+        {
+            return Err("Invalid output rate, channels or playback speed.".into());
         }
-        let Some(left) = self.left else {
+        let bypass = output_rate == self.decoder.info.sample_rate && speed == 1.0;
+        if bypass && self.resampler.is_some() {
+            self.decoder.seek(self.position)?;
+            self.resampler = None;
+        }
+        if !bypass
+            && self
+                .resampler
+                .as_ref()
+                .is_none_or(|stream| stream.rate != output_rate || stream.speed != speed)
+        {
+            if self.resampler.is_some() {
+                self.decoder.seek(self.position)?;
+            }
+            self.resampler = Some(super::resampler::SincStream::new(
+                self.decoder.info.sample_rate,
+                self.decoder.info.channels as usize,
+                output_rate,
+                speed,
+                self.position,
+            )?);
+        }
+        let source = if let Some(resampler) = &mut self.resampler {
+            resampler.next(&mut self.decoder, self.position)?
+        } else {
+            self.decoder.next_frame()?
+        };
+        let Some(source) = source else {
             return Ok(None);
         };
-        let right = self.right.unwrap_or(left);
-        let mut source = [0.0; MAX_CHANNELS];
-        for i in 0..self.decoder.info.channels as usize {
-            source[i] = left[i] + (right[i] - left[i]) * self.fraction as f32;
-        }
         let output = map_channels(source, self.decoder.info.channels as usize, output_channels);
         self.position += f64::from(speed) / output_rate as f64;
-        self.fraction +=
-            self.decoder.info.sample_rate as f64 * f64::from(speed) / output_rate as f64;
-        while self.fraction >= 1.0 {
-            self.fraction -= 1.0;
-            self.left = self.right;
-            self.right = if self.left.is_some() {
-                self.decoder.next_frame()?
-            } else {
-                None
-            };
-        }
         Ok(Some(output))
     }
 }

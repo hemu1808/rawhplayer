@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize, specta::Type)]
 #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
 pub struct Policy {
     pub allow_updates: bool,
@@ -52,6 +52,7 @@ impl Policy {
     }
 }
 #[tauri::command]
+#[specta::specta]
 pub fn deployment_policy(policy: tauri::State<'_, Policy>) -> Policy {
     policy.inner().clone()
 }

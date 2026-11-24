@@ -6,6 +6,7 @@ declare global {
 }
 
 export interface Track {
+  analysis?: import('./services/generated/native').TrackAnalysis;
   id: string;
   file?: File;
   path?: string; // Absolute path for Native Engine
@@ -72,30 +73,7 @@ export interface AudioDevice {
   is_default: boolean;
 }
 
-export interface AudioInfo {
-  sample_rate: number;
-  bit_depth: number | null;
-  channels: number;
-  device_name: string | null;
-  output_sample_rate: number | null;
-  output_channels: number | null;
-  output_format: string | null;
-  queue_id: string | null;
-  path: string | null;
-  current_time: number;
-  duration: number;
-  is_playing: boolean;
-  volume: number;
-  playback_rate: number;
-  is_purist: boolean;
-  crossfade_seconds: number;
-  normalization: 'off' | 'track' | 'album';
-  preamp_db: number;
-  clipping_count: number;
-  underrun_count: number;
-  ready: boolean;
-  error: string | null;
-}
+export type AudioInfo = import('./services/generated/native').AudioInfo;
 
 export interface AudioState {
   isPlaying: boolean;

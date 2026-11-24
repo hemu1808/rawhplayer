@@ -1,0 +1,45 @@
+{
+  "date": "2026-11-08",
+  "branch": "update/Features",
+  "environment": "Windows 11, unoptimized Rust test build, synthetic SQLite metadata",
+  "scope": "Storage, bounded bootstrap/page serialization and preference patch; excludes scanning, decoding and browser rendering",
+  "results": [
+    {
+      "tracks": 10000,
+      "insertMs": 2684,
+      "loadMs": 201,
+      "favoriteSaveMs": 230,
+      "favoriteRowWrites": 4,
+      "unchangedSaveMs": 229,
+      "unchangedRowWrites": 0,
+      "searchMs": 24,
+      "bootstrapMs": 13,
+      "bootstrapBytes": 54584,
+      "lastPageMs": 14,
+      "favoritePatchMicros": 1921,
+      "favoritePatchBytes": 201,
+      "favoritePatchWrites": 3
+    },
+    {
+      "tracks": 100000,
+      "insertMs": 28442,
+      "loadMs": 2032,
+      "favoriteSaveMs": 2264,
+      "favoriteRowWrites": 4,
+      "unchangedSaveMs": 2210,
+      "unchangedRowWrites": 0,
+      "searchMs": 250,
+      "bootstrapMs": 114,
+      "bootstrapBytes": 54871,
+      "lastPageMs": 130,
+      "favoritePatchMicros": 3328,
+      "favoritePatchBytes": 201,
+      "favoritePatchWrites": 3
+    }
+  ],
+  "notes": [
+    "Patch writes: one track, one catalog revision and one user revision.",
+    "The compatibility save also creates an initial configuration row.",
+    "Query indexes and revision triggers add import work; compare matching builds and workloads."
+  ]
+}

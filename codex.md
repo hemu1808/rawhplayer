@@ -4,16 +4,18 @@
 
 > Canonical project memory for analysis, implementation planning, walkthroughs, deployment and validation. Keep and update this file for the lifetime of the project.
 
+> 2026-11-08: The user authorized fixing the November review findings and preparing an advanced-feature roadmap. Implementation is authorized for this work; historical proposal-only notes below do not restrict it. The user subsequently authorized the first five modern features. Work is in the canonical checkout on `update/Features`; the old implementation worktree was removed after integration. Current evidence is in `IMPLEMENTATION_STATUS.md` and `docs/VALIDATION.md`. Delivered features are in `docs/FEATURES_2026-11-08.md`; remaining proposals are in `docs/MODERNIZATION.md`. Publishing, pushing and signing with a real identity remain separate actions.
+
 ## Document control
 
 - Root: `D:/repos/rawhplayer`
 - Product: React/Tauri desktop audio player
 - Initial audit: 2026-08-24
-- Status: Strong potential with successful build; proposal-only by user instruction.
+- Status: November review repairs implemented; release acceptance remains subject to the current checkpoint.
 - Safety: never delete, push, deploy or alter remotes without explicit authorization; preserve unrelated changes.
-- Change mode: **proposal only** until the user explicitly changes this instruction.
+- Change mode: implementation authorized for the November repairs and the first five selected modernization features.
 
-## Executive verdict
+## Executive verdict (historical initial audit)
 
 Strong potential with successful build; proposal-only by user instruction. A local build alone is not production readiness. Production requires secure identity/authorization, reproducible delivery, automated evidence, runtime observability, rollback and clear ownership.
 
@@ -46,7 +48,7 @@ Large dirty tree; ESLint missing; concurrent tests failed to spawn; deprecated V
 
 ## Immediate priorities
 
-Do not change code. Reproduce install; run tests serially; minimize capabilities; split engine; add device/backend contracts and crash recovery.
+Keep the shared contracts and persistence regressions green; finish signed installer/update and physical-device acceptance before public release. Prioritize the measured library and audio boundaries in the modernization roadmap.
 
 ## Enterprise engineering principles
 

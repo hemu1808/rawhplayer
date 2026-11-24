@@ -3,6 +3,7 @@ import { Track, SortOption } from '../types';
 import { FolderPlus, FileAudio, Play, LayoutGrid, List as ListIcon, Rows, MoreVertical, Trash2, ArrowUpDown } from 'lucide-react';
 import { ScrollArea } from '../components/ScrollArea';
 import { TrackMetadataEditor } from '../components/TrackMetadataEditor';
+import { NativeCatalogPage } from '../components/NativeCatalogPage';
 
 interface FilesPageProps {
   tracks: Track[];
@@ -16,7 +17,10 @@ interface FilesPageProps {
 
 const OVERSCAN = 5;
 
-export const FilesPage: React.FC<FilesPageProps> = ({ tracks, onPlay, onUpload, onImport, onPlayNext, onAddToQueue, onRemove }) => {
+export const FilesPage: React.FC<FilesPageProps> = (props) =>
+  window.__TAURI_INTERNALS__ ? <NativeCatalogPage onPlay={props.onPlay} onImport={props.onImport} /> : <BrowserFilesPage {...props} />;
+
+const BrowserFilesPage: React.FC<FilesPageProps> = ({ tracks, onPlay, onUpload, onImport, onPlayNext, onAddToQueue, onRemove }) => {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; trackId: string } | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [sortBy, setSortBy] = useState<SortOption>('date');
