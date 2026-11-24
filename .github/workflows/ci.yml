@@ -2,8 +2,9 @@ name: CI
 
 on:
   workflow_call:
+  workflow_dispatch:
   push:
-    branches: [main, develop]
+    branches: [main, develop, 'update/**']
   pull_request:
     branches: [main]
 
@@ -62,8 +63,12 @@ jobs:
         run: cargo clippy --locked -- -D warnings
 
   test-frontend:
-    name: Test Frontend
-    runs-on: ubuntu-latest
+    name: Test Frontend (${{ matrix.platform }})
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ubuntu-latest, windows-latest]
     needs: lint-frontend
     steps:
       - uses: actions/checkout@v4
@@ -76,6 +81,9 @@ jobs:
       - run: npm run test:release
       - run: npm audit --audit-level=moderate
       - run: npx playwright install --with-deps chromium
+        if: runner.os == 'Linux'
+      - run: npx playwright install chromium
+        if: runner.os == 'Windows'
       - run: npm run test:e2e
 
   test-backend:

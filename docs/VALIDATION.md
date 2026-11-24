@@ -1,8 +1,16 @@
 # Repairs, modern features and validation
 
-Work date: 2026-11-08. Canonical checkout: `D:/repos/rawhplayer`. Current branch: `update/Features`.
+The November 8 checkpoint was completed on `update/Features`. The canonical checkout at `D:/repos/rawhplayer` now uses `main`.
 
-## Current feature checkpoint
+## Release hardening checks
+
+The desktop backup file path uses buffered JSON I/O and an atomic export. The browser preview retains its 64 MiB input limit. Desktop file backups can be up to 512 MiB and use the same version-1 JSON schema. Run `npm run test:native:backup` for a synthetic 250,000-track round trip.
+
+The playback regression suite covers failed starts, stale transitions after queue edits and rapid selection. Decoder opens and seeks run on preparation workers, and the audio-device worker owns CPAL stream creation and teardown. Active output continues serving frames while another decoder or output is prepared. In-flight work is checked again before application. File watching coalesces changed paths into indexed scans. Startup, watcher overflow and root reconnect still trigger full reconciliation. Availability checks run outside the main SQLite lock.
+
+Run `npm run test:e2e` with port 1420 available. The browser runner starts and closes its own Vite server in-process. CI runs the browser suite on Windows and Linux for pushes to `main` and supports manual runs.
+
+## November 8 feature checkpoint
 
 The first five modernization improvements are implemented: paged catalog/patch persistence, Rubato sinc conversion, generated command/core-event contracts, OS media sessions and cancellable local analysis/discovery. See [FEATURES_2026-11-08.md](FEATURES_2026-11-08.md) for behavior and limits.
 
@@ -52,6 +60,6 @@ Older binaries reject newer internal database versions. To roll back, close all 
 
 ## Practical limits
 
-The 250,000-track boundary prevents contract drift and overflow; it is not a claim that every UI operation is fast at that size. Slow media/device preparation still shares the render worker and needs stress measurements. Duplicate-name rejection is safer routing, not a replacement for stable platform device IDs. Digital silence cannot establish audible quality, correct channel mapping on every device, exclusive mode or bit-perfect output.
+The 250,000-track boundary limits the catalog size. Deep pages, initial scans and restore still have collection-size costs. Steady-state decoding feeds the render queue and needs stress measurements on slow or removable storage. Devices with duplicate names cannot be selected by name. Audible quality and channel mapping require physical device tests.
 
 Real publisher/updater credentials, signed clean-machine install/update/recovery, unplug/replug and sleep/resume, codec fixtures, macOS/Linux execution and manual accessibility acceptance remain release obligations. Current Rust auditing must be reported with upstream maintenance/unsoundness warnings; a zero-vulnerability count does not erase those warnings. No public release or remote CI execution is implied by local checks.

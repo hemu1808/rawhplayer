@@ -1,7 +1,9 @@
 //! A bounded wake channel coalesces filesystem bursts into native library scans.
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
+use parking_lot::Mutex;
 use std::{
     collections::HashSet,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{self, SyncSender},
@@ -16,43 +18,61 @@ pub struct FolderWatcher {
     stop: Arc<AtomicBool>,
 }
 
+#[derive(Default)]
+struct Changes {
+    full: bool,
+    paths: HashSet<PathBuf>,
+}
+
+impl Changes {
+    fn request_full(&mut self) {
+        self.full = true;
+        self.paths.clear();
+    }
+
+    fn add(&mut self, paths: impl IntoIterator<Item = PathBuf>) {
+        if self.full {
+            return;
+        }
+        for path in paths {
+            self.paths.insert(path);
+            if self.paths.len() > 1024 {
+                self.request_full();
+                break;
+            }
+        }
+    }
+}
+
 impl FolderWatcher {
     pub fn new(app: AppHandle) -> Result<Self, String> {
         let (wake, events) = mpsc::sync_channel(1);
         let signal = wake.clone();
-        let dirty = Arc::new(AtomicBool::new(true));
-        let changed = dirty.clone();
+        let changes = Arc::new(Mutex::new(Changes {
+            full: true,
+            paths: HashSet::new(),
+        }));
+        let queued = changes.clone();
         let watcher = RecommendedWatcher::new(
             move |event: notify::Result<notify::Event>| {
-                // Read/access events are caused by our own scan and must not retrigger it.
-                if event
-                    .as_ref()
-                    .map(|event| {
-                        !event.kind.is_access()
-                            && event.paths.iter().any(|path| {
-                                path.is_dir()
-                                    || path.extension().is_none()
-                                    || path
-                                        .extension()
-                                        .and_then(|ext| ext.to_str())
-                                        .map(|ext| {
-                                            crate::library_contract::AUDIO_EXTENSIONS
-                                                .contains(&ext.to_ascii_lowercase().as_str())
-                                        })
-                                        .unwrap_or(false)
-                            })
-                    })
-                    .unwrap_or(true)
-                {
-                    changed.store(true, Ordering::Release);
-                    let _ = signal.try_send(());
+                match event {
+                    Ok(event) if event.need_rescan() || event.paths.is_empty() => {
+                        queued.lock().request_full()
+                    }
+                    Ok(event) if event.kind.is_access() => return,
+                    // Deleted paths may have been directories. Keep event paths
+                    // intact and resolve their scope on the scan worker.
+                    Ok(event) => queued.lock().add(event.paths),
+                    Err(_) => queued.lock().request_full(),
                 }
+                let _ = signal.try_send(());
             },
             Config::default(),
         )
         .map_err(|e| format!("Cannot initialize folder watching: {e}"))?;
         let stop = Arc::new(AtomicBool::new(false));
         let stopped = stop.clone();
+        let _ = wake.try_send(());
         std::thread::Builder::new().name("rawh-library-watch".into()).spawn(move || {
             let mut watcher = watcher;
             let mut active = HashSet::<String>::new();
@@ -62,17 +82,17 @@ impl FolderWatcher {
                 let _ = events.recv_timeout(Duration::from_secs(2));
                 if stopped.load(Ordering::Acquire) { break; }
                 let library = app.state::<crate::library::NativeLibrary>();
-                if last_sync.elapsed() >= Duration::from_secs(2) || dirty.load(Ordering::Acquire) {
+                if last_sync.elapsed() >= Duration::from_secs(2) {
                     last_sync = Instant::now();
                     let desired = match library.watched_folders() {
                         Ok(folders) => folders.into_iter().collect::<HashSet<_>>(),
                         Err(error) => { let _ = app.emit("library_error", error); continue; }
                     };
                     for path in active.clone() {
-                        if !desired.contains(&path) || !std::path::Path::new(&path).is_dir() {
-                            let _ = watcher.unwatch(std::path::Path::new(&path));
+                        if !desired.contains(&path) || !Path::new(&path).is_dir() {
+                            let _ = watcher.unwatch(Path::new(&path));
                             active.remove(&path);
-                            dirty.store(true, Ordering::Release);
+                            changes.lock().request_full();
                         }
                     }
                     failed.retain(|path| desired.contains(path));
@@ -83,33 +103,42 @@ impl FolderWatcher {
                         match result {
                             Ok(()) => {
                                 failed.remove(path);
-                                dirty.store(true, Ordering::Release);
+                                changes.lock().request_full();
                             }
                             Err(_) => {
                                 if failed.insert(path.clone()) {
                                     let _ = app.emit("library_error", "A watched folder is unavailable. It will be retried automatically.");
-                                    dirty.store(true, Ordering::Release);
+                                    changes.lock().request_full();
                                 }
                             }
                         }
                     }
                     active = desired.into_iter().filter(|path| !failed.contains(path)).collect();
                 }
-                if !dirty.swap(false, Ordering::AcqRel) { continue; }
+                {
+                    let queued = changes.lock();
+                    if !queued.full && queued.paths.is_empty() { continue; }
+                }
                 // Quiet-period debounce with a maximum delay under continuous writes.
                 let burst = Instant::now();
                 while burst.elapsed() < Duration::from_secs(2) {
                     if events.recv_timeout(Duration::from_millis(300)).is_err() { break; }
                 }
                 if stopped.load(Ordering::Acquire) { break; }
-                // Clear before scanning: changes during the scan schedule another pass.
-                dirty.store(false, Ordering::Release);
-                match library.reconcile(|progress| { let _ = app.emit("library_scan_progress", progress); }) {
+                let batch = std::mem::take(&mut *changes.lock());
+                let progress = |progress| { let _ = app.emit("library_scan_progress", progress); };
+                let result = if batch.full {
+                    library.reconcile_watched(progress)
+                } else {
+                    library.reconcile_paths(&batch.paths, progress)
+                };
+                match result {
                     Ok(_) => { crate::library::catalog::notify(&app); }
                     Err(error) => {
                         // A picker/manual scan may already hold the scan lock. Retry
                         // once the worker wakes, without losing the filesystem change.
-                        dirty.store(true, Ordering::Release);
+                        let mut queued = changes.lock();
+                        if batch.full { queued.request_full(); } else { queued.add(batch.paths); }
                         let _ = app.emit("library_error", error);
                     }
                 }

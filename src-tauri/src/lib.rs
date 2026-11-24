@@ -10,23 +10,32 @@ mod policy;
 mod support;
 mod watcher;
 
+use audio_engine::audio::equalizer::{self, EqualizerResponse, EqualizerSettings};
 use audio_engine::{AudioDeviceInfo, AudioEngine, AudioInfo};
-use tauri::{Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 #[tauri::command]
 #[specta::specta]
-fn play_file(
-    path: String,
-    queue_id: String,
-    library: State<'_, library::NativeLibrary>,
-    engine: State<'_, Option<AudioEngine>>,
+async fn play_file(path: String, queue_id: String, app: AppHandle) -> Result<(), String> {
+    audio_operation(app, move |app, engine| {
+        app.state::<library::NativeLibrary>()
+            .authorize_path(&path)?;
+        engine.play_file_with_id(path, queue_id)
+    })
+    .await
+}
+
+async fn audio_operation(
+    app: AppHandle,
+    operation: impl FnOnce(&AppHandle, &AudioEngine) -> Result<(), String> + Send + 'static,
 ) -> Result<(), String> {
-    library.authorize_path(&path)?;
-    engine
-        .as_ref()
-        .ok_or_else(|| "Audio Engine is not available".to_string())?
-        .play_file_with_id(path, queue_id)
+    tauri::async_runtime::spawn_blocking(move || {
+        let engine = app.state::<Option<AudioEngine>>();
+        operation(&app, engine.as_ref().ok_or("Audio engine unavailable")?)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -40,11 +49,8 @@ fn toggle_play(engine: State<'_, Option<AudioEngine>>) -> Result<(), String> {
 
 #[tauri::command]
 #[specta::specta]
-fn seek_audio(position: f64, engine: State<'_, Option<AudioEngine>>) -> Result<(), String> {
-    engine
-        .as_ref()
-        .ok_or_else(|| "Audio Engine is not available".to_string())?
-        .seek(position)
+async fn seek_audio(position: f64, app: AppHandle) -> Result<(), String> {
+    audio_operation(app, move |_, engine| engine.seek(position)).await
 }
 
 #[tauri::command]
@@ -67,6 +73,28 @@ fn set_equalizer_band(
         .as_ref()
         .ok_or_else(|| "Audio Engine is not available".to_string())?
         .set_equalizer_band(index, gain)
+}
+
+#[tauri::command]
+#[specta::specta]
+fn configure_equalizer(
+    settings: EqualizerSettings,
+    bypass: bool,
+    engine: State<'_, Option<AudioEngine>>,
+) -> Result<(), String> {
+    engine
+        .as_ref()
+        .ok_or("Audio engine unavailable")?
+        .configure_equalizer(settings, bypass)
+}
+
+#[tauri::command]
+#[specta::specta]
+fn preview_equalizer(
+    settings: EqualizerSettings,
+    sample_rate: u32,
+) -> Result<EqualizerResponse, String> {
+    equalizer::response(&settings, sample_rate)
 }
 
 #[tauri::command]
@@ -112,17 +140,13 @@ fn set_crossfade_duration(
 
 #[tauri::command]
 #[specta::specta]
-fn queue_next_file(
-    path: String,
-    queue_id: String,
-    library: State<'_, library::NativeLibrary>,
-    engine: State<'_, Option<AudioEngine>>,
-) -> Result<(), String> {
-    library.authorize_path(&path)?;
-    engine
-        .as_ref()
-        .ok_or_else(|| "Audio Engine is not available".to_string())?
-        .queue_next_file_with_id(path, queue_id)
+async fn queue_next_file(path: String, queue_id: String, app: AppHandle) -> Result<(), String> {
+    audio_operation(app, move |app, engine| {
+        app.state::<library::NativeLibrary>()
+            .authorize_path(&path)?;
+        engine.queue_next_file_with_id(path, queue_id)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -159,14 +183,8 @@ fn set_paused(paused: bool, engine: State<'_, Option<AudioEngine>>) -> Result<()
 }
 #[tauri::command]
 #[specta::specta]
-fn set_output_device(
-    device_id: Option<String>,
-    engine: State<'_, Option<AudioEngine>>,
-) -> Result<(), String> {
-    engine
-        .as_ref()
-        .ok_or("Audio engine unavailable")?
-        .set_output_device(device_id)
+async fn set_output_device(device_id: Option<String>, app: AppHandle) -> Result<(), String> {
+    audio_operation(app, move |_, engine| engine.set_output_device(device_id)).await
 }
 #[tauri::command]
 #[specta::specta]

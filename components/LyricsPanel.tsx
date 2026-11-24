@@ -53,7 +53,7 @@ export function LyricsPanel({
       onKeyDown={(event) => {
         if (event.key === 'Escape') onClose();
       }}
-      className="absolute inset-y-0 right-0 w-80 z-40 bg-neutral-950 border-l border-white/10 p-5 overflow-auto"
+      className="workspace-drawer p-5 overflow-auto"
     >
       <div className="flex justify-between mb-5">
         <h2>Lyrics</h2>

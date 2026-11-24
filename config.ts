@@ -7,7 +7,7 @@ import libraryContract from './shared/library-contract.json';
  * and feature flags. Used by contexts, hooks, and components.
  */
 
-export const APP_NAME = 'Rawh Player';
+export const APP_NAME = 'RawhPlayer';
 export const VERSION = '3.0.0';
 export const APP_IDENTIFIER = 'com.rawhplayer.app';
 

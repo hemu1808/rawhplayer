@@ -1,57 +1,41 @@
-import React from 'react';
-import { Track, AudioState } from '../types';
-import { Play, Pause, SkipForward, Maximize2 } from 'lucide-react';
+import type { Track, AudioState } from '../types';
+import { Play, Pause, SkipForward, Maximize2, SlidersHorizontal } from 'lucide-react';
+import { TrackArtwork } from './TrackArtwork';
+import { SeekBar } from './SeekBar';
 
 interface MiniPlayerProps {
   track: Track | null;
   audioState: AudioState;
   onPlayPause: () => void;
   onNext: () => void;
+  onSeek: (time: number) => void;
+  onEqualizer: () => void;
   onMaximize: () => void;
 }
 
-export const MiniPlayer: React.FC<MiniPlayerProps> = ({ track, audioState, onPlayPause, onNext, onMaximize }) => {
-  const progressPercent = audioState.duration > 0 ? (audioState.currentTime / audioState.duration) * 100 : 0;
-
+export function MiniPlayer({ track, audioState, onPlayPause, onNext, onSeek, onEqualizer, onMaximize }: MiniPlayerProps) {
   return (
-    <div className="fixed bottom-4 right-4 bg-neutral-900/90 backdrop-blur-xl border border-white/10 rounded-2xl p-3 shadow-2xl flex items-center gap-4 w-[320px] z-50">
-      <div className="w-14 h-14 rounded-lg bg-neutral-800 overflow-hidden flex-shrink-0">
-        {track?.image ? (
-          <img src={track.image} alt={track.name} className="w-full h-full object-cover" />
-        ) : (
-          <div className="w-full h-full bg-primary-500/20" />
-        )}
-      </div>
-      <div className="flex-1 min-w-0">
-        <h4 className="font-bold text-sm truncate">{track?.name || 'No track selected'}</h4>
-        <p className="text-xs text-white/50 truncate">{track?.artist || 'Open the full player to import music'}</p>
-      </div>
-      <div className="flex items-center gap-2">
-        <button
-          aria-label={audioState.isPlaying ? 'Pause' : 'Play'}
-          onClick={onPlayPause}
-          className="p-2 bg-white/10 rounded-full hover:bg-white/20 transition-colors"
-        >
-          {audioState.isPlaying ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" className="ml-0.5" />}
+    <section className="compact-player" aria-label="Compact player">
+      <div className="compact-player-row">
+        <TrackArtwork src={track?.image} />
+        <div className="transport-meta">
+          <p>{track?.name || 'No track selected'}</p>
+          {track?.artist && <span>{track.artist}</span>}
+        </div>
+        <button className="transport-play" type="button" aria-label={audioState.isPlaying ? 'Pause' : 'Play'} onClick={onPlayPause}>
+          {audioState.isPlaying ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}
         </button>
-        <button
-          aria-label="Next track"
-          onClick={onNext}
-          className="p-2 hover:bg-white/10 rounded-full transition-colors text-white/70 hover:text-white"
-        >
+        <button className="icon-button" type="button" aria-label="Next track" onClick={onNext}>
           <SkipForward size={16} />
         </button>
-        <button
-          aria-label="Restore full player"
-          onClick={onMaximize}
-          className="p-1 hover:bg-white/10 rounded-full transition-colors text-white/50 hover:text-white ml-1"
-        >
-          <Maximize2 size={14} />
+        <button className="icon-button" type="button" aria-label="Open equalizer" onClick={onEqualizer}>
+          <SlidersHorizontal size={16} />
+        </button>
+        <button className="icon-button" type="button" aria-label="Restore full player" onClick={onMaximize}>
+          <Maximize2 size={16} />
         </button>
       </div>
-      <div className="absolute bottom-0 left-4 right-4 h-0.5 bg-white/10 rounded-full overflow-hidden">
-        <div className="h-full bg-primary-500" style={{ width: `${progressPercent}%` }} />
-      </div>
-    </div>
+      <SeekBar key={track?.id} time={audioState.currentTime} duration={audioState.duration} onSeek={onSeek} compact />
+    </section>
   );
-};
+}

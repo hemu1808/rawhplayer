@@ -277,18 +277,8 @@ impl ResampledTrack {
         Ok(())
     }
 
-    pub fn render(
-        &mut self,
-        output_rate: u32,
-        output_channels: usize,
-        speed: f32,
-    ) -> Result<Option<Frame>, String> {
-        if output_rate == 0
-            || output_rate > 768_000
-            || !(1..=MAX_CHANNELS).contains(&output_channels)
-            || !speed.is_finite()
-            || !(0.25..=4.0).contains(&speed)
-        {
+    pub fn prepare_output(&mut self, output_rate: u32, speed: f32) -> Result<(), String> {
+        if output_rate == 0 || output_rate > 768_000 || !(0.25..=4.0).contains(&speed) {
             return Err("Invalid output rate, channels or playback speed.".into());
         }
         let bypass = output_rate == self.decoder.info.sample_rate && speed == 1.0;
@@ -313,6 +303,19 @@ impl ResampledTrack {
                 self.position,
             )?);
         }
+        Ok(())
+    }
+
+    pub fn render(
+        &mut self,
+        output_rate: u32,
+        output_channels: usize,
+        speed: f32,
+    ) -> Result<Option<Frame>, String> {
+        if !(1..=MAX_CHANNELS).contains(&output_channels) {
+            return Err("Invalid audio output channel count.".into());
+        }
+        self.prepare_output(output_rate, speed)?;
         let source = if let Some(resampler) = &mut self.resampler {
             resampler.next(&mut self.decoder, self.position)?
         } else {

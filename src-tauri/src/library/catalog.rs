@@ -530,7 +530,13 @@ pub async fn play_library_track(
     app: AppHandle,
     track_id: String,
     queue_id: String,
+    position: Option<f64>,
 ) -> Reply<LibraryTrack> {
+    let stamp = app
+        .state::<Option<crate::audio_engine::AudioEngine>>()
+        .as_ref()
+        .ok_or_else(|| IpcError::internal("Audio engine unavailable"))?
+        .reserve_play();
     tauri::async_runtime::spawn_blocking(move || -> Result<LibraryTrack, String> {
         let library = app.state::<NativeLibrary>();
         let track = library.track(&track_id)?;
@@ -538,7 +544,7 @@ pub async fn play_library_track(
         app.state::<Option<crate::audio_engine::AudioEngine>>()
             .as_ref()
             .ok_or("Audio engine unavailable")?
-            .play_file_with_id(path_string(&path), queue_id)?;
+            .play_reserved(path_string(&path), queue_id, position, stamp)?;
         Ok(track)
     })
     .await
@@ -586,7 +592,7 @@ pub async fn library_import_catalog(app: AppHandle, paths: Vec<String>) -> Reply
 pub async fn library_reconcile_catalog(app: AppHandle) -> Reply<LibraryHeader> {
     tauri::async_runtime::spawn_blocking(move || {
         let library = app.state::<NativeLibrary>();
-        library.reconcile(|progress| {
+        library.reconcile_watched(|progress| {
             let _ = app.emit("library_scan_progress", progress);
         })?;
         notify(&app);

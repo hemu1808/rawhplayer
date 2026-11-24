@@ -165,10 +165,7 @@ const BrowserFilesPage: React.FC<FilesPageProps> = ({ tracks, onPlay, onUpload, 
         )}
       </div>
 
-      <label
-        onClick={onImport ? () => onImport(false) : undefined}
-        className="flex items-center gap-2 bg-white text-black hover:bg-neutral-200 font-bold py-2 px-4 rounded-lg cursor-pointer transition-all hover:scale-105 active:scale-95 shadow-lg"
-      >
+      <label onClick={onImport ? () => onImport(false) : undefined} className="button cursor-pointer">
         <FolderPlus size={16} />
         <span className="text-xs">Import</span>
         {!onImport && <input type="file" multiple accept={ACCEPT_EXTENSIONS} className="hidden" onChange={onUpload} />}
@@ -228,7 +225,7 @@ const BrowserFilesPage: React.FC<FilesPageProps> = ({ tracks, onPlay, onUpload, 
             </div>
           ) : (
             <div className="relative w-full" style={{ height: `${totalHeight}px` }}>
-              <div className="grid grid-cols-12 text-[10px] font-bold text-neutral-500 uppercase tracking-widest border-b border-white/10 bg-black/80 backdrop-blur-xl sticky top-0 z-20 h-[40px] items-center">
+              <div className="grid grid-cols-12 text-[10px] font-bold text-neutral-400 uppercase tracking-widest border-b border-white/10 bg-black/80 backdrop-blur-xl sticky top-0 z-20 h-[40px] items-center">
                 <div className="col-span-6 pl-4">Name</div>
                 <div className="col-span-3">Format</div>
                 <div className="col-span-2 hidden md:block">Quality</div>

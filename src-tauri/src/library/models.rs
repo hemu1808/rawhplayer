@@ -1,4 +1,40 @@
+use serde::de::{IgnoredAny, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
+use std::marker::PhantomData;
+
+use crate::library_contract::{
+    MAX_PLAYLISTS, MAX_PLAYLIST_TRACKS, MAX_QUEUE_ENTRIES, MAX_TRACKS, MAX_WATCHED_FOLDERS,
+};
+
+fn limited_vec<'de, D, T, const LIMIT: usize>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    struct Limited<T, const LIMIT: usize>(PhantomData<T>);
+    impl<'de, T: Deserialize<'de>, const LIMIT: usize> Visitor<'de> for Limited<T, LIMIT> {
+        type Value = Vec<T>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(formatter, "a list with at most {LIMIT} entries")
+        }
+
+        fn visit_seq<A: SeqAccess<'de>>(self, mut sequence: A) -> Result<Vec<T>, A::Error> {
+            let mut values = Vec::new();
+            while values.len() < LIMIT {
+                match sequence.next_element()? {
+                    Some(value) => values.push(value),
+                    None => return Ok(values),
+                }
+            }
+            if sequence.next_element::<IgnoredAny>()?.is_some() {
+                return Err(serde::de::Error::invalid_length(LIMIT + 1, &self));
+            }
+            Ok(values)
+        }
+    }
+    deserializer.deserialize_seq(Limited::<T, LIMIT>(PhantomData))
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, specta::Type)]
 #[serde(rename_all = "camelCase", default)]
@@ -71,7 +107,7 @@ pub struct SmartRule {
 pub struct Playlist {
     pub id: String,
     pub name: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "limited_vec::<_, _, MAX_PLAYLIST_TRACKS>")]
     pub track_ids: Vec<String>,
     pub smart_rule: Option<SmartRule>,
     #[serde(default)]
@@ -101,15 +137,15 @@ impl Default for PlaybackSession {
 #[serde(rename_all = "camelCase")]
 pub struct LibrarySnapshot {
     pub schema_version: u32,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "limited_vec::<_, _, MAX_TRACKS>")]
     pub tracks: Vec<LibraryTrack>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "limited_vec::<_, _, MAX_QUEUE_ENTRIES>")]
     pub queue: Vec<QueueEntry>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "limited_vec::<_, _, MAX_PLAYLISTS>")]
     pub playlists: Vec<Playlist>,
     #[serde(default)]
     pub session: PlaybackSession,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "limited_vec::<_, _, MAX_WATCHED_FOLDERS>")]
     pub watched_folders: Vec<String>,
 }
 

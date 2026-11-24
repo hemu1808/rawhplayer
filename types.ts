@@ -200,41 +200,43 @@ export const EQ_PRESETS: EqualizerPreset[] = [
   },
 ];
 
+const GOLD_THEME_COLORS = { 300: '#fff09a', 400: '#ffe375', 500: '#f2d34b', 600: '#b79b2e', 900: '#332a12' };
+
 export const THEMES: ThemeColor[] = [
   {
-    name: 'Immersive Glass',
+    name: 'Slate',
     id: 'immersive',
-    colors: { 300: '#ffffff', 400: '#e5e5e5', 500: '#ffffff', 600: '#a3a3a3', 900: '#262626' },
+    colors: { 300: '#e1e8ee', 400: '#c9d4dd', 500: '#b1c2cf', 600: '#8a9faa', 900: '#303e45' },
   },
   {
-    name: 'Dynamic',
+    name: 'Album artwork',
     id: 'dynamic',
-    colors: { 300: '#ffffff', 400: '#cccccc', 500: '#aaaaaa', 600: '#666666', 900: '#333333' },
+    colors: GOLD_THEME_COLORS,
   },
   {
-    name: 'Rawh Gold',
+    name: 'Brass',
     id: 'gold',
-    colors: { 300: '#fcd34d', 400: '#fbbf24', 500: '#f59e0b', 600: '#d97706', 900: '#78350f' },
+    colors: { 300: '#f3e4ba', 400: '#e2cc99', 500: '#d1b47b', 600: '#ab925f', 900: '#413721' },
   },
   {
-    name: 'Reference',
+    name: 'Gold',
     id: 'reference',
-    colors: { 300: '#d4d4d4', 400: '#a3a3a3', 500: '#737373', 600: '#525252', 900: '#171717' },
+    colors: GOLD_THEME_COLORS,
   },
   {
-    name: 'Analog Warm',
+    name: 'Copper',
     id: 'analog',
-    colors: { 300: '#fdba74', 400: '#fb923c', 500: '#f97316', 600: '#ea580c', 900: '#431407' },
+    colors: { 300: '#f0d6c5', 400: '#e2b99e', 500: '#d1a184', 600: '#ae7d63', 900: '#473329' },
   },
   {
-    name: 'Cyber Blue',
+    name: 'Harbor',
     id: 'cyber',
-    colors: { 300: '#67e8f9', 400: '#22d3ee', 500: '#06b6d4', 600: '#0891b2', 900: '#164e63' },
+    colors: { 300: '#d0e3ee', 400: '#b6d3e3', 500: '#9ebfd4', 600: '#739bb4', 900: '#2c414c' },
   },
   {
-    name: 'Forest Studio',
+    name: 'Fern',
     id: 'forest',
-    colors: { 300: '#86efac', 400: '#4ade80', 500: '#22c55e', 600: '#16a34a', 900: '#14532d' },
+    colors: { 300: '#d6e9d8', 400: '#bbd7bf', 500: '#a1c3a6', 600: '#81a887', 900: '#304436' },
   },
 ];
 

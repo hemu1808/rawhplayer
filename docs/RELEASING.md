@@ -42,9 +42,13 @@ Each target generates npm/Rust CycloneDX SBOMs, a license-declaration inventory 
 
 ## Recovery and hardware checks
 
-- Fresh install, import/play/seek, pause/resume, queue reorder/remove, crossfade and long-session output stability.
-- Sleep/resume, default-device changes, unplug/replug and unavailable watched-folder recovery.
+- Open a PR to `main` or run CI on the candidate branch before tagging. Confirm the Linux and Windows browser jobs and all four Tauri targets succeed.
+- From a fresh install, import and play WAV, FLAC, MP3, Ogg/Vorbis, AAC, M4A and AIFF fixtures. Record source and output formats, seek results, and any audible dropouts with matching and converted sample rates.
+- During continuous playback, preload from a slow or removable drive, seek repeatedly, switch devices and reorder or remove the next entry near gapless and crossfade boundaries. Record playback position, expected next track, and the change in underrun count visible in diagnostics. Repeat across default-device changes, unplug/replug and sleep/resume.
+- Add, rename and remove a nested watched folder while browsing or saving edits in a large catalog. Record time to reflect changes and whether browsing and edits stay responsive. Reconnect an unavailable root and verify that playlist IDs and favorites survive.
+- Verify play/pause, seek and track info from headset buttons and system media controls. Navigate import, playback, queue, backup and update controls using the keyboard and a platform screen reader.
 - Upgrade with favorites, playlists and saved position intact and paused.
+- Run `npm run test:native:backup` and restore a copy of a representative desktop backup on a clean profile. Confirm playlists, queue order and missing-file recovery before restoring on a primary profile.
 - Reject an untrusted signature and truncated download while preserving the working installation.
 - Network loss, disk exhaustion, cancelled installer and failed installation.
 - Reinstall the previous signed installer with a compatible backup if deployment fails; do not silently downgrade a migrated database.
@@ -64,6 +68,6 @@ Launch with `RAWH_DISABLE_UPDATES=1` to prevent updater-plugin registration and 
 
 Absent fields default to true. Invalid, unreadable or oversized policy files prevent startup; unknown fields are rejected to catch misspellings. Changes apply after restart. Native command handlers enforce restrictions on Gemini/YouTube requests and file-tag edits/undo; local import, library edits and remote artwork display are separate. Protect the file and its parent directory with administrator-owned permissions. This is local deployment configuration, not tamper resistance against a user controlling the process environment or executable. Central distribution, SSO and organization auditing are not implemented.
 
-The locked dependency audit currently reports no vulnerability errors and seven upstream warnings: `instant` (RUSTSEC-2024-0384), `paste` (RUSTSEC-2024-0436), `proc-macro-error` (RUSTSEC-2024-0370), `zbus_names` (RUSTSEC-2026-0371), `zvariant` (RUSTSEC-2026-0370), `zvariant_derive` (RUSTSEC-2026-0372) and Linux `glib` VariantStrIter unsoundness (RUSTSEC-2024-0429). CI preserves these warnings without blanket ignore rules. Review the Linux dependency risk before distribution and track upstream resolution.
+The November 23 RustSec audit passed with eight upstream warnings after updating `cookie`, `url` and bundled SQLite through `rusqlite`. The warnings covered `chrono`, `instant`, `paste`, `proc-macro-error`, `zbus_names`, `zvariant`, `zvariant_derive` and Linux `glib` VariantStrIter unsoundness. CI fetches current RustSec advisories and preserves the warning output. Review the Linux dependency risk before distribution.
 
 Development builds omit updater configuration. Never add a placeholder key to bypass release checks.

@@ -174,3 +174,62 @@ describe('native library persistence', () => {
     expect(harness.close).toHaveBeenCalledOnce();
   });
 });
+
+describe('native playback transitions', () => {
+  it('continues checkpointing the audible track when starting another entry fails', async () => {
+    const { result } = await pausedLibrary();
+    await act(async () => result.current.enqueueTrack('one'));
+    const next = result.current.queueEntries[1].id;
+    harness.invoke.mockImplementation(async (command: string) => {
+      if (command === 'play_library_track') throw new Error('Could not open the selected track');
+      if (command === 'library_patch') return { revision: 10, catalogRevision: 10 };
+      return null;
+    });
+    await act(async () => result.current.playQueueEntry(next));
+    expect(result.current.error).toBe('Could not open the selected track');
+    await playback(12, true);
+    await act(async () => vi.advanceTimersByTimeAsync(500));
+    expect(result.current.snapshot.session).toMatchObject({ currentQueueId: 'q1', position: 12 });
+    expect(saves().at(-1)![1].patch.session.currentQueueId).toBe('q1');
+  });
+
+  it('plays the next surviving entry after a removed entry starts from buffered audio', async () => {
+    const { result } = await pausedLibrary();
+    await act(async () => {
+      result.current.enqueueTrack('one');
+      result.current.enqueueTrack('one');
+    });
+    const [, removed, survivor] = result.current.queueEntries;
+    await act(async () => result.current.removeQueueEntry(removed.id));
+    harness.invoke.mockClear();
+    await act(async () => {
+      harness.handlers.get('track_ended')!({ payload: { queue_id: 'q1', next_queue_id: removed.id } });
+      harness.handlers.get('track_started')!({ payload: { queue_id: removed.id } });
+      harness.handlers.get('track_ended')!({ payload: { queue_id: removed.id, next_queue_id: null } });
+    });
+    expect(harness.invoke.mock.calls).toContainEqual(['play_library_track', { trackId: 'one', queueId: survivor.id, position: null }]);
+    expect(result.current.currentQueueId).toBe(survivor.id);
+  });
+
+  it('keeps the newer selection when an older play request finishes later', async () => {
+    const { result } = await pausedLibrary();
+    await act(async () => {
+      result.current.enqueueTrack('one');
+      result.current.enqueueTrack('one');
+    });
+    const [, older, newer] = result.current.queueEntries;
+    const original = harness.invoke.getMockImplementation()!;
+    let finishOlder!: (track: unknown) => void;
+    harness.invoke.mockImplementation((command: string, args) => {
+      if (command === 'play_library_track' && args.queueId === older.id)
+        return new Promise((resolve) => {
+          finishOlder = resolve;
+        });
+      return original(command, args);
+    });
+    await act(async () => result.current.playQueueEntry(older.id));
+    await act(async () => result.current.playQueueEntry(newer.id));
+    await act(async () => finishOlder(result.current.snapshot.tracks[0]));
+    expect(result.current.currentQueueId).toBe(newer.id);
+  });
+});

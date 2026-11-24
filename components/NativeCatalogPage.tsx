@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
+import { Ellipsis, FileAudio, FolderOpen, Heart } from 'lucide-react';
 import { useLibrary } from '../context/LibraryContext';
 import { errorMessage } from '../context/PlayerContext';
 import { ScrollArea } from './ScrollArea';
 import { TrackMetadataEditor } from './TrackMetadataEditor';
+import { formatPlaybackTime } from './SeekBar';
+import { TrackArtwork } from './TrackArtwork';
 import type { Track } from '../types';
 import { commands, type CatalogGroup, type CatalogSort } from '../services/generated/native';
 
@@ -61,14 +64,18 @@ export function NativeCatalogPage({
       subtitle={group === 'tracks' ? `${result.total.toLocaleString()} items` : `Browse by ${group}`}
       action={
         onImport && (
-          <div className="flex gap-4">
-            <button onClick={() => onImport(false)}>Import files</button>
-            <button onClick={() => onImport(true)}>Import folder</button>
+          <div className="flex flex-wrap gap-2 justify-end">
+            <button className="button button--primary" onClick={() => onImport(false)}>
+              <FileAudio size={15} /> Import files
+            </button>
+            <button className="button" onClick={() => onImport(true)}>
+              <FolderOpen size={15} /> Import folder
+            </button>
           </div>
         )
       }
     >
-      <div className="px-6 pb-28 space-y-5">
+      <div className="catalog-workspace">
         <div className="flex flex-wrap gap-3">
           <input
             aria-label="Search library"
@@ -145,7 +152,7 @@ export function NativeCatalogPage({
             {groups.map((item) => (
               <li key={item.name}>
                 <button
-                  className="text-left w-full border border-white/10 rounded-xl p-4"
+                  className="catalog-group"
                   aria-label={`Browse ${group} ${item.name || 'Unknown'} (${item.tracks} tracks)`}
                   onClick={() => {
                     setFilter({ [group]: item.name });
@@ -160,44 +167,75 @@ export function NativeCatalogPage({
             ))}
           </ul>
         ) : (
-          <ol className="divide-y divide-white/10">
+          <ol className="catalog-list">
             {result.tracks.map((row) => {
               const track = cached.get(row.id) ?? row;
+              const analysis = track.analysis;
               return (
-                <li key={track.id} className="py-3 flex flex-wrap gap-3 items-center">
+                <li key={track.id} className="catalog-row">
                   <button
+                    type="button"
                     onClick={() => onPlay(track)}
                     aria-label={`Play ${track.name} by ${track.artist}`}
-                    className="text-left flex-1 min-w-48"
+                    className="catalog-track"
                   >
-                    <span className="block font-medium">{track.name}</span>
-                    <span className="text-xs text-neutral-400">
-                      {track.artist} · {track.album || 'Unknown album'} · {track.format || 'Audio'}
-                      {track.missing ? ' · Missing file' : ''}
-                    </span>
-                    {track.analysis && (
-                      <span className="block text-xs text-neutral-400">
-                        {track.analysis.bpm ? `≈ ${Math.round(track.analysis.bpm)} BPM · ` : ''}
-                        {track.analysis.musicalKey || 'Key undetermined'}
-                        {track.analysis.integratedLufs !== null ? ` · ${track.analysis.integratedLufs.toFixed(1)} LUFS` : ''}
+                    <TrackArtwork src={track.image} />
+                    <span className="catalog-track-text">
+                      <strong>{track.name}</strong>
+                      <span>
+                        {track.artist} {track.missing && '· Missing file'}
                       </span>
-                    )}
+                      {analysis && (
+                        <small>
+                          {[
+                            analysis.bpm && `${Math.round(analysis.bpm)} BPM`,
+                            analysis.musicalKey,
+                            analysis.integratedLufs !== null && `${analysis.integratedLufs.toFixed(1)} LUFS`,
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')}
+                        </small>
+                      )}
+                    </span>
                   </button>
-                  <button aria-label={`Favorite ${track.name}`} aria-pressed={!!track.isLiked} onClick={() => toggleLike(track.id)}>
-                    {track.isLiked ? '♥' : '♡'}
+                  <span className="catalog-album" title={track.album}>
+                    {track.album || '—'}
+                  </span>
+                  <span className="catalog-duration">{track.duration ? formatPlaybackTime(track.duration) : '—'}</span>
+                  <button
+                    className="icon-button"
+                    aria-label={`Favorite ${track.name}`}
+                    aria-pressed={!!track.isLiked}
+                    onClick={() => toggleLike(track.id)}
+                  >
+                    <Heart size={16} fill={track.isLiked ? 'currentColor' : 'none'} />
                   </button>
-                  <button className="text-xs" onClick={() => enqueueTrack(track.id, true)}>
-                    Play next
-                  </button>
-                  <button className="text-xs" onClick={() => enqueueTrack(track.id)}>
-                    Add to queue
-                  </button>
-                  <button className="text-xs" onClick={() => setEditing(track)}>
-                    Edit tags
-                  </button>
-                  <button className="text-xs" onClick={() => void removeTrack(track.id)}>
-                    Remove
-                  </button>
+                  <details className="catalog-menu">
+                    <summary className="icon-button" aria-label={`Actions for ${track.name}`}>
+                      <Ellipsis size={18} />
+                    </summary>
+                    <div>
+                      {[
+                        { label: 'Play next', run: () => enqueueTrack(track.id, true) },
+                        { label: 'Add to queue', run: () => enqueueTrack(track.id) },
+                        { label: 'Edit tags', run: () => setEditing(track) },
+                        { label: 'Remove', run: () => void removeTrack(track.id) },
+                      ].map(({ label, run }) => (
+                        <button
+                          key={label}
+                          type="button"
+                          onClick={(event) => {
+                            const menu = event.currentTarget.closest('details');
+                            menu?.querySelector('summary')?.focus();
+                            if (menu) menu.open = false;
+                            run();
+                          }}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </details>
                 </li>
               );
             })}
@@ -209,10 +247,11 @@ export function NativeCatalogPage({
           </p>
         )}
         <nav aria-label="Library pages" className="flex gap-5">
-          <button disabled={!offset || loading} onClick={() => setOffset(Math.max(0, offset - 100))}>
+          <button className="button" disabled={!offset || loading} onClick={() => setOffset(Math.max(0, offset - 100))}>
             Previous
           </button>
           <button
+            className="button"
             disabled={loading || (group === 'tracks' ? offset + 100 >= result.total : groups.length < 100)}
             onClick={() => setOffset(offset + 100)}
           >

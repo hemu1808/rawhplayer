@@ -1,315 +1,304 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { EqualizerBand, EQ_PRESETS } from '../types';
-import { RotateCcw, X, Activity, ChevronDown, Zap } from 'lucide-react';
-import { listen } from '@tauri-apps/api/event';
+import { useEffect, useRef, type KeyboardEvent } from 'react';
+import { Plus, RotateCcw, Trash2, X } from 'lucide-react';
+import { EQ_GAIN_MAX, EQ_GAIN_MIN } from '../config';
+import { EQ_PRESETS, type EqualizerBand } from '../types';
+import { EQ_LIMITS, FILTER_TYPES, MAX_PARAMETRIC_BANDS, eqBand, inRange, type AdvancedEqualizer } from '../services/equalizerSettings';
+import type { EqualizerSettings, FilterKind, ParametricBand } from '../services/generated/native';
+import { EqualizerGraph } from './EqualizerGraph';
 
 interface EqualizerProps {
-  isOpen: boolean;
+  enabled: boolean;
+  onToggle: () => void;
   onClose: () => void;
   bands: EqualizerBand[];
   onBandChange: (index: number, gain: number) => void;
   onReset: () => void;
   currentPresetId: string;
   onPresetChange: (presetId: string) => void;
+  settings: EqualizerSettings;
+  onAdvancedChange: (patch: Partial<AdvancedEqualizer>) => void;
+  sampleRate: number;
+  syncError: string;
 }
 
-export const Equalizer: React.FC<EqualizerProps> = ({ isOpen, onClose, bands, onBandChange, onReset, currentPresetId, onPresetChange }) => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const rafRef = useRef<number>(0);
-  const fftDataRef = useRef<number[]>(new Array(512).fill(0));
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
-
-  useEffect(() => {
-    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
-    setPrefersReducedMotion(mediaQuery.matches);
-    const handler = (e: MediaQueryListEvent) => setPrefersReducedMotion(e.matches);
-    mediaQuery.addEventListener('change', handler);
-    return () => mediaQuery.removeEventListener('change', handler);
-  }, []);
-
-  useEffect(() => {
-    if (!isOpen) return;
-
-    let active = true;
-    let unlistenFn: (() => void) | null = null;
-
-    const setupListener = async () => {
-      const u = await listen<{ fft: number[] }>('fft_data', (event) => {
-        if (active) {
-          fftDataRef.current = event.payload.fft;
-        }
-      });
-      if (active) {
-        unlistenFn = u;
-      } else {
-        u();
-      }
-    };
-
-    setupListener();
-
-    return () => {
-      active = false;
-      if (unlistenFn) {
-        unlistenFn();
-      }
-    };
-  }, [isOpen]);
-
-  // RTA Visualization Loop
-  useEffect(() => {
-    if (!isOpen || !canvasRef.current || prefersReducedMotion) return;
-
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const draw = () => {
-      const dataArray = fftDataRef.current;
-      const bufferLength = dataArray.length;
-
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      const width = canvas.width;
-      const height = canvas.height;
-      const barWidth = width / 64;
-
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
-
-      for (let i = 0; i < 64; i++) {
-        const bin = Math.floor(Math.pow(i / 64, 2) * bufferLength);
-        // Normalize rustfft magnitude
-        const value = Math.min((dataArray[bin] || 0) / 500, 1.0);
-        const barHeight = value * height;
-
-        if (barHeight > 0) {
-          ctx.fillRect(i * barWidth, height - barHeight, barWidth - 1, barHeight);
-        }
-      }
-      rafRef.current = requestAnimationFrame(draw);
-    };
-
-    draw();
-
-    return () => cancelAnimationFrame(rafRef.current);
-  }, [isOpen, prefersReducedMotion]);
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isOpen) {
-        onClose();
-        return;
-      }
-      if (e.key === 'Tab' && isOpen && containerRef.current) {
-        const focusables = containerRef.current.querySelectorAll(
-          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
-        );
-        if (focusables.length > 0) {
-          const first = focusables[0] as HTMLElement;
-          const last = focusables[focusables.length - 1] as HTMLElement;
-          if (e.shiftKey) {
-            if (document.activeElement === first) {
-              last.focus();
-              e.preventDefault();
-            }
-          } else {
-            if (document.activeElement === last) {
-              first.focus();
-              e.preventDefault();
-            }
-          }
-        }
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
-
-  useEffect(() => {
-    if (isOpen) {
-      setTimeout(() => {
-        const focusables = containerRef.current?.querySelectorAll(
-          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
-        );
-        if (focusables && focusables.length > 0) {
-          (focusables[0] as HTMLElement).focus();
-        }
-      }, 50);
+function NumberField({
+  label,
+  value,
+  range,
+  onCommit,
+  disabled = false,
+}: {
+  label: string;
+  value: number;
+  range: { min: number; max: number; step: number };
+  onCommit: (value: number) => void;
+  disabled?: boolean;
+}) {
+  function finish(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      event.currentTarget.blur();
     }
-  }, [isOpen]);
-
-  if (!isOpen) return null;
-
-  const formatFreq = (freq: number) => {
-    return freq >= 1000 ? `${freq / 1000}k` : freq.toString();
-  };
-
+  }
   return (
-    <div
-      ref={containerRef}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="eq-title"
-      className="absolute inset-y-0 right-0 w-full md:w-[450px] bg-neutral-900/95 backdrop-blur-3xl border-l border-white/10 shadow-[0_0_100px_rgba(0,0,0,0.9)] z-[90] animate-in slide-in-from-right duration-400 ease-out flex flex-col font-sans"
-    >
-      {/* Pro Header */}
-      <div className="flex items-center justify-between p-6 border-b border-white/5 bg-gradient-to-b from-white/5 to-transparent shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-black/50 border border-white/10 flex items-center justify-center text-primary-500 shadow-inner">
-            <Activity size={20} />
-          </div>
-          <div>
-            <h3 id="eq-title" className="font-bold text-white tracking-wide text-sm">
-              Parametric EQ
-            </h3>
-            <p className="text-[11px] text-primary-500/80 font-mono flex items-center gap-1">
-              <Zap size={10} /> MASTER OUTPUT
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={onReset}
-            className="p-2.5 bg-white/5 hover:bg-white/10 border border-white/5 rounded-full text-neutral-400 hover:text-white transition-all active:scale-95"
-            title="Reset to Flat"
-            aria-label="Reset equalizer to flat"
-          >
-            <RotateCcw size={16} />
-          </button>
-          <button
-            onClick={onClose}
-            className="p-2.5 bg-white/5 hover:bg-red-500/20 border border-white/5 rounded-full text-neutral-400 hover:text-red-400 transition-all active:scale-95"
-            aria-label="Close equalizer"
-          >
-            <X size={16} />
-          </button>
-        </div>
+    <input
+      key={value}
+      type="number"
+      aria-label={label}
+      defaultValue={value}
+      min={range.min}
+      max={range.max}
+      step={range.step}
+      disabled={disabled}
+      onKeyDown={finish}
+      onBlur={(event) => {
+        const next = event.currentTarget.valueAsNumber;
+        if (inRange(next, range)) {
+          if (next !== value) onCommit(next);
+        } else {
+          event.currentTarget.value = String(value);
+        }
+      }}
+    />
+  );
+}
+
+function ParametricBands({
+  filters,
+  sampleRate,
+  update,
+}: {
+  filters: ParametricBand[];
+  sampleRate: number;
+  update: (bands: ParametricBand[]) => void;
+}) {
+  function change(index: number, patch: Partial<ParametricBand>) {
+    update(filters.map((band, i) => (i === index ? { ...band, ...patch } : band)));
+  }
+  return (
+    <div className="eq-parametric">
+      <div className="eq-filter-heading">
+        <h3>Filters</h3>
+        <button
+          type="button"
+          className="button"
+          disabled={filters.length >= MAX_PARAMETRIC_BANDS}
+          onClick={() => update([...filters, eqBand(1000)])}
+        >
+          <Plus size={14} /> Add filter
+        </button>
       </div>
-
-      {/* Dynamic Visualization Area */}
-      <div className="h-40 w-full bg-[#0a0a0a] relative overflow-hidden border-b border-white/5 shrink-0 shadow-inner">
-        <canvas ref={canvasRef} width={450} height={160} className="absolute inset-0 w-full h-full opacity-50" />
-
-        <div className="absolute inset-0 grid grid-cols-10 opacity-10 pointer-events-none">
-          {[...Array(10)].map((_, i) => (
-            <div key={i} className="border-r border-white h-full" />
-          ))}
-        </div>
-
-        <svg className="absolute inset-0 w-full h-full p-0 overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none">
-          <defs>
-            <linearGradient id="eqGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="var(--primary-500)" stopOpacity="0.4" />
-              <stop offset="100%" stopColor="var(--primary-500)" stopOpacity="0" />
-            </linearGradient>
-          </defs>
-          <path
-            d={
-              `M0,100 ` +
-              bands.map((b, i) => `L${(i / (bands.length - 1)) * 100},${100 - ((b.gain + 12) / 24) * 100}`).join(' ') +
-              ` L100,100 Z`
-            }
-            fill="url(#eqGradient)"
-            className="transition-all duration-300 ease-out"
-          />
-          <path
-            d={
-              `M0,${100 - ((bands[0].gain + 12) / 24) * 100} ` +
-              bands.map((b, i) => `L${(i / (bands.length - 1)) * 100},${100 - ((b.gain + 12) / 24) * 100}`).join(' ')
-            }
-            fill="none"
-            stroke="var(--primary-400)"
-            strokeWidth="2"
-            className="drop-shadow-[0_0_8px_rgba(var(--primary-500),0.8)] transition-all duration-300 ease-out"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            vectorEffect="non-scaling-stroke"
-          />
-        </svg>
-
-        <div className="absolute top-1/2 w-full h-[1px] bg-white/20 border-t border-dashed border-white/20" />
-      </div>
-
-      {/* Controls Container - Explicit Grid for precise label alignment */}
-      <div className="flex-1 p-6 pb-2 overflow-y-auto custom-scrollbar bg-neutral-900/50">
-        <div className="grid grid-cols-10 gap-1 h-full min-h-[300px]">
-          {bands.map((band, index) => (
-            <div key={`${band.frequency}-${index}`} className="flex flex-col items-center h-full group relative">
-              {/* Interactive Slider Track */}
-              <div className="relative flex-1 w-full flex justify-center py-4 group cursor-pointer">
-                <div className="absolute top-0 bottom-0 w-1.5 bg-black rounded-full overflow-hidden shadow-[inset_0_1px_3px_rgba(0,0,0,1)] border border-white/5">
-                  <div className="absolute top-1/2 left-0 right-0 h-[1px] bg-white/20" />
-                  <div
-                    className={`absolute left-0 right-0 bg-primary-500 transition-all duration-75 ${band.gain === 0 ? 'opacity-0' : 'opacity-100'}`}
-                    style={{
-                      top: band.gain > 0 ? `${50 - (band.gain / 12) * 50}%` : '50%',
-                      height: `${(Math.abs(band.gain) / 12) * 50}%`,
-                    }}
-                  />
-                </div>
-
-                <input
-                  type="range"
-                  min="-12"
-                  max="12"
-                  step="0.5"
-                  value={band.gain}
-                  onChange={(e) => onBandChange(index, parseFloat(e.target.value))}
-                  className="absolute inset-0 h-full w-full appearance-none bg-transparent cursor-pointer z-10 opacity-0"
-                  {...{ orient: 'vertical' }}
-                  aria-label={`${formatFreq(band.frequency)} Hz band gain`}
-                  aria-valuetext={`${band.gain} decibels`}
+      {filters.length > 0 && (
+        <div className="eq-filter-list">
+          <div className="eq-filter-row eq-filter-labels" aria-hidden="true">
+            <span>On</span>
+            <span>Type</span>
+            <span>Hz</span>
+            <span>dB</span>
+            <span>Q</span>
+            <span />
+          </div>
+          {filters.map((filter, index) => {
+            const label = `Filter ${index + 1}`;
+            const kind = FILTER_TYPES[filter.kind];
+            const outside = filter.enabled && filter.frequency >= sampleRate * 0.49;
+            return (
+              <div className="eq-filter-row" key={index} data-disabled={!filter.enabled || outside}>
+                <button
+                  type="button"
+                  role="switch"
+                  className="eq-toggle"
+                  aria-label={`Enable ${label.toLowerCase()}`}
+                  aria-checked={filter.enabled}
+                  onClick={() => change(index, { enabled: !filter.enabled })}
+                >
+                  <span className="eq-switch" aria-hidden="true" />
+                </button>
+                <select
+                  aria-label={`${label} type`}
+                  value={filter.kind}
+                  onChange={(event) => change(index, { kind: event.currentTarget.value as FilterKind })}
+                >
+                  {Object.entries(FILTER_TYPES).map(([id, option]) => (
+                    <option key={id} value={id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <NumberField
+                  label={`${label} frequency`}
+                  value={filter.frequency}
+                  range={EQ_LIMITS.frequency}
+                  onCommit={(frequency) => change(index, { frequency })}
                 />
-
-                <div
-                  className="absolute w-6 h-8 bg-gradient-to-b from-neutral-700 to-neutral-900 rounded-[4px] shadow-[0_4px_6px_rgba(0,0,0,0.8),inset_0_1px_0_rgba(255,255,255,0.1)] pointer-events-none transition-transform duration-100 flex items-center justify-center border border-black group-hover:border-primary-500/50"
-                  style={{
-                    bottom: `${((band.gain + 12) / 24) * 100}%`,
-                    transform: 'translateY(50%)',
-                  }}
+                <NumberField
+                  label={`${label} gain`}
+                  value={filter.gain}
+                  range={EQ_LIMITS.gain}
+                  disabled={!kind.gain}
+                  onCommit={(gain) => change(index, { gain })}
+                />
+                <NumberField
+                  label={`${label} Q`}
+                  value={filter.q}
+                  range={EQ_LIMITS.q}
+                  disabled={!kind.q}
+                  onCommit={(q) => change(index, { q })}
+                />
+                <button
+                  className="icon-button"
+                  type="button"
+                  aria-label={`Remove ${label.toLowerCase()}`}
+                  onClick={() => update(filters.filter((_, i) => i !== index))}
                 >
-                  <div className="w-full h-[2px] bg-white shadow-[0_0_5px_rgba(255,255,255,0.5)]" />
-                </div>
+                  <Trash2 size={14} />
+                </button>
+                {outside && <span className="eq-nyquist">Above the output device’s frequency range</span>}
               </div>
-
-              {/* Value & Label */}
-              <div className="h-14 flex flex-col items-center justify-start pt-2 gap-1 w-full text-center">
-                <span
-                  className={`text-[9px] font-mono font-bold transition-colors ${band.gain !== 0 ? 'text-primary-400' : 'text-neutral-600'}`}
-                >
-                  {band.gain > 0 ? '+' : ''}
-                  {band.gain.toFixed(0)}
-                </span>
-                <span className="text-[10px] font-bold text-white/80 group-hover:text-white transition-colors">
-                  {formatFreq(band.frequency)}
-                </span>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
-      </div>
-
-      {/* Footer: Preset Manager */}
-      <div className="p-6 pt-4 border-t border-white/5 bg-black/20">
-        <label className="block text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-2">DSP Profile</label>
-        <div className="relative group">
-          <select
-            value={currentPresetId}
-            onChange={(e) => onPresetChange(e.target.value)}
-            className="w-full appearance-none bg-neutral-800 border border-white/10 text-white text-sm rounded-xl px-4 py-3 outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500/50 transition-all cursor-pointer hover:bg-neutral-700 shadow-lg"
-          >
-            {EQ_PRESETS.map((preset) => (
-              <option key={preset.id} value={preset.id} className="bg-neutral-900">
-                {preset.label}
-              </option>
-            ))}
-          </select>
-          <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-neutral-400 group-hover:text-white transition-colors">
-            <ChevronDown size={16} />
-          </div>
-        </div>
-      </div>
+      )}
     </div>
   );
-};
+}
+
+export function Equalizer({
+  enabled,
+  onToggle,
+  onClose,
+  bands,
+  onBandChange,
+  onReset,
+  currentPresetId,
+  onPresetChange,
+  settings,
+  onAdvancedChange,
+  sampleRate,
+  syncError,
+}: EqualizerProps) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const panel = dialog.current;
+    const previous = document.activeElement;
+    panel?.showModal();
+    return () => {
+      panel?.close();
+      if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
+    };
+  }, []);
+
+  return (
+    <dialog
+      ref={dialog}
+      className="equalizer-dialog"
+      aria-labelledby="eq-title"
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
+    >
+      <div className="equalizer-content">
+        <header className="equalizer-header">
+          <h2 id="eq-title">Equalizer</h2>
+          <button className="icon-button" type="button" aria-label="Close equalizer" onClick={onClose} title="Close equalizer">
+            <X size={19} />
+          </button>
+        </header>
+        <div className="equalizer-settings">
+          <div className="eq-modes" aria-label="Equalizer mode" role="group">
+            <button
+              type="button"
+              className="button"
+              aria-pressed={settings.mode === 'graphic'}
+              onClick={() => onAdvancedChange({ mode: 'graphic' })}
+            >
+              Graphic
+            </button>
+            <button
+              type="button"
+              className="button"
+              aria-pressed={settings.mode === 'parametric'}
+              onClick={() => onAdvancedChange({ mode: 'parametric' })}
+            >
+              Parametric
+            </button>
+          </div>
+          <button className="eq-toggle" type="button" role="switch" aria-checked={enabled} onClick={onToggle} aria-label="Enable equalizer">
+            <span className="eq-switch" aria-hidden="true" />
+            {enabled ? 'EQ on' : 'EQ bypassed'}
+          </button>
+          <button className="button" type="button" aria-label="Reset equalizer to flat" onClick={onReset}>
+            <RotateCcw size={15} /> Reset
+          </button>
+        </div>
+        {syncError && (
+          <p className="eq-sync-error" role="alert">
+            {syncError}
+          </p>
+        )}
+        <EqualizerGraph settings={settings} sampleRate={sampleRate} enabled={enabled} />
+        <div className="eq-gain-controls">
+          <label className="eq-preset">
+            Preamp{' '}
+            <NumberField
+              label="EQ preamp"
+              value={settings.preampDb}
+              range={EQ_LIMITS.preamp}
+              onCommit={(preampDb) => onAdvancedChange({ preampDb })}
+            />{' '}
+            dB
+          </label>
+          <button
+            className="eq-toggle"
+            type="button"
+            role="switch"
+            aria-label="Automatic headroom"
+            aria-checked={settings.autoHeadroom}
+            title="Reduces preamp gain based on the calculated filter response"
+            onClick={() => onAdvancedChange({ autoHeadroom: !settings.autoHeadroom })}
+          >
+            <span className="eq-switch" aria-hidden="true" /> Auto headroom
+          </button>
+          {settings.mode === 'graphic' && (
+            <label className="eq-preset">
+              Preset
+              <select value={currentPresetId} onChange={(event) => onPresetChange(event.currentTarget.value)}>
+                {EQ_PRESETS.map(({ id, label }) => (
+                  <option key={id} value={id}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+        </div>
+        {settings.mode === 'parametric' ? (
+          <ParametricBands filters={settings.filters} sampleRate={sampleRate} update={(filters) => onAdvancedChange({ filters })} />
+        ) : (
+          <div className="eq-bands">
+            {bands.map(({ frequency, gain }, index) => (
+              <label className="eq-band" key={frequency}>
+                <span className="eq-gain">
+                  {gain > 0 ? '+' : ''}
+                  {gain.toFixed(1)}
+                </span>
+                <input
+                  type="range"
+                  min={EQ_GAIN_MIN}
+                  max={EQ_GAIN_MAX}
+                  step={0.5}
+                  value={gain}
+                  aria-label={`${frequency} Hz`}
+                  aria-valuetext={`${gain} dB`}
+                  onChange={(event) => onBandChange(index, event.currentTarget.valueAsNumber)}
+                />
+                <span>{frequency < 1000 ? `${frequency} Hz` : `${frequency / 1000} kHz`}</span>
+              </label>
+            ))}
+          </div>
+        )}
+      </div>
+    </dialog>
+  );
+}

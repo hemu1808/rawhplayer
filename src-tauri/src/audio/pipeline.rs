@@ -1,7 +1,8 @@
 use super::super::{EndedEvent, RenderNotice, TrackEvent};
 use super::{
     decoder::{MediaInfo, ResampledTrack},
-    dsp::{crossfade_gains, normalization_gain, Equalizer},
+    dsp::{crossfade_gains, normalization_gain},
+    equalizer::{Equalizer, EqualizerSettings},
     output::{AudioBlock, BLOCK_FRAMES},
 };
 use std::collections::VecDeque;
@@ -16,10 +17,11 @@ pub struct Pipeline {
     pub crossfade: f32,
     pub normalization: String,
     pub preamp_db: f32,
-    pub gains: [f32; 10],
+    pub eq_settings: EqualizerSettings,
     pub sample_rate: u32,
     pub channels: usize,
     eq: Equalizer,
+    fading_eq: Option<(Equalizer, u32)>,
     pub serial: u64,
     notices: VecDeque<RenderNotice>,
     pub clipping: u64,
@@ -39,10 +41,11 @@ impl Pipeline {
             crossfade: 0.0,
             normalization: "off".into(),
             preamp_db: 0.0,
-            gains: [0.0; 10],
+            eq_settings: EqualizerSettings::default(),
             sample_rate: 48_000,
             channels: 2,
-            eq: Equalizer::new(48_000, &[0.0; 10]),
+            eq: Equalizer::bypass(48_000),
+            fading_eq: None,
             serial: 0,
             notices: VecDeque::new(),
             clipping: 0,
@@ -69,8 +72,69 @@ impl Pipeline {
     }
 
     pub fn reset_dsp(&mut self) {
-        self.eq = Equalizer::new(self.sample_rate, &self.gains);
+        if self.eq.rate == self.sample_rate {
+            self.eq.reset();
+        } else {
+            self.eq = self.build_eq();
+        }
+        self.fading_eq = None;
         self.analysis.clear();
+    }
+
+    fn build_eq(&self) -> Equalizer {
+        if self.purist {
+            Equalizer::bypass(self.sample_rate)
+        } else {
+            Equalizer::new(self.sample_rate, &self.eq_settings)
+        }
+    }
+
+    pub fn configure_eq(&mut self, settings: EqualizerSettings, bypass: bool) {
+        if self.eq_settings == settings && self.purist == bypass {
+            return;
+        }
+        let was_bypassed = self.purist;
+        self.eq_settings = settings;
+        self.purist = bypass;
+        if !was_bypassed || !bypass {
+            self.transition_eq();
+        }
+    }
+
+    pub fn bypass_eq(&mut self, bypass: bool) {
+        if self.purist != bypass {
+            self.purist = bypass;
+            self.transition_eq();
+        }
+    }
+
+    fn transition_eq(&mut self) {
+        let next = self.build_eq();
+        let previous = std::mem::replace(&mut self.eq, next);
+        self.fading_eq = self.current.as_ref().map(|_| (previous, 0));
+    }
+
+    pub fn applied_eq_preamp(&self) -> f64 {
+        self.eq.applied_preamp_db
+    }
+
+    fn process_eq(&mut self, frame: &mut super::decoder::Frame) {
+        let Some((previous, elapsed)) = &mut self.fading_eq else {
+            self.eq.process(frame, self.channels);
+            return;
+        };
+        let length = (self.sample_rate / 100).max(1);
+        let mut old = *frame;
+        previous.process(&mut old, self.channels);
+        self.eq.process(frame, self.channels);
+        *elapsed += 1;
+        let progress = *elapsed as f32 / length as f32;
+        for (sample, prior) in frame.iter_mut().zip(old).take(self.channels) {
+            *sample = prior + (*sample - prior) * progress;
+        }
+        if *elapsed >= length {
+            self.fading_eq = None;
+        }
     }
 
     pub fn stop(&mut self) {
@@ -196,16 +260,9 @@ impl Pipeline {
             if fade_done {
                 self.fading = None;
             }
-            if !self.purist {
-                self.eq.process(&mut frame, self.channels);
-            }
-            let headroom = if self.purist {
-                1.0
-            } else {
-                10.0_f32.powf(-self.gains.iter().copied().fold(0.0, f32::max) / 20.0)
-            };
+            self.process_eq(&mut frame);
             for sample in frame.iter_mut().take(self.channels) {
-                *sample *= self.volume * headroom;
+                *sample *= self.volume;
                 if !sample.is_finite() {
                     *sample = 0.0;
                 }

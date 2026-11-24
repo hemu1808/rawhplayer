@@ -89,12 +89,15 @@ fn gain(value: Option<&str>) -> Option<f32> {
 /// Counts distinct library identities, not reimports or path repairs.
 struct ImportBudget {
     ids: HashSet<String>,
+    total: usize,
     maximum: usize,
 }
 impl ImportBudget {
     fn new(ids: impl IntoIterator<Item = String>, maximum: usize) -> Self {
+        let ids: HashSet<_> = ids.into_iter().collect();
         Self {
-            ids: ids.into_iter().collect(),
+            total: ids.len(),
+            ids,
             maximum,
         }
     }
@@ -102,15 +105,16 @@ impl ImportBudget {
         if self.ids.contains(id) {
             return Ok(());
         }
-        if self.ids.len() >= self.maximum {
+        if self.total >= self.maximum {
             return Err(format!("The library supports at most {} tracks. No new files from this scan were imported.", self.maximum));
         }
         self.ids.insert(id.to_owned());
+        self.total += 1;
         Ok(())
     }
 }
 
-mod backup;
+pub mod backup;
 mod media;
 mod metadata;
 mod scan;

@@ -1,10 +1,13 @@
-//! Output streams and decoders are owned by one worker; IPC carries only commands.
+//! Audio rendering consumes prepared decoders and output ports without waiting on setup I/O.
 #[path = "audio/mod.rs"]
 pub(crate) mod audio;
 use audio::{
-    decoder::ResampledTrack,
-    output::{self, OutputSignals},
+    equalizer::{EqualizerMode, EqualizerSettings, GRAPHIC_FREQUENCIES},
+    output::{self, OutputPort, OutputSignals},
     pipeline::Pipeline,
+    preparation::{
+        DeviceJob, Preparation, Prepared, Reply, Revision, Stamp, TrackAction, TrackJob,
+    },
 };
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -75,6 +78,8 @@ pub struct AudioInfo {
     pub volume: f32,
     pub playback_rate: f32,
     pub is_purist: bool,
+    pub eq_mode: EqualizerMode,
+    pub eq_preamp_db: f64,
     pub crossfade_seconds: f32,
     pub normalization: String,
     pub preamp_db: f32,
@@ -87,16 +92,17 @@ impl tauri_specta::Event for AudioInfo {
     const NAME: &'static str = "playback_update";
 }
 enum Command {
-    Play(String, String),
+    Play(String, String, Option<f64>, Stamp),
     Queue(String, String),
     Clear,
     Stop,
     Pause(bool),
     Toggle,
-    Seek(f64),
+    Seek(f64, Stamp),
     Volume(f32),
     Speed(f32),
     Eq(usize, f32),
+    ConfigureEq(EqualizerSettings, bool),
     Purist(bool),
     Crossfade(f32),
     Normalize(String, f32),
@@ -104,8 +110,7 @@ enum Command {
 }
 struct Request {
     command: Command,
-    response: SyncSender<Result<(), String>>,
-    deadline: Instant,
+    reply: Reply,
 }
 fn check_deadline(deadline: Instant) -> Result<(), String> {
     if Instant::now() >= deadline {
@@ -117,6 +122,7 @@ fn check_deadline(deadline: Instant) -> Result<(), String> {
 pub struct AudioEngine {
     sender: SyncSender<Request>,
     info: Arc<Mutex<AudioInfo>>,
+    transport: Revision,
 }
 fn bounded(value: f64, min: f64, max: f64) -> Result<(), String> {
     if value.is_finite() && value >= min && value <= max {
@@ -127,22 +133,29 @@ fn bounded(value: f64, min: f64, max: f64) -> Result<(), String> {
 }
 impl AudioEngine {
     pub fn new(app: AppHandle) -> Result<Self, String> {
+        let preparation = Preparation::new()?;
         let (sender, receiver) = mpsc::sync_channel::<Request>(64);
         let info = Arc::new(Mutex::new(AudioInfo::default()));
         let shared = info.clone();
         std::thread::Builder::new()
             .name("rawh-audio".into())
-            .spawn(move || worker(app, receiver, shared))
+            .spawn(move || worker(app, receiver, shared, preparation))
             .map_err(|e| e.to_string())?;
-        Ok(Self { sender, info })
+        Ok(Self {
+            sender,
+            info,
+            transport: Revision::default(),
+        })
     }
     fn send(&self, command: Command) -> Result<(), String> {
         let (response, result) = mpsc::sync_channel(1);
         self.sender
             .try_send(Request {
                 command,
-                response,
-                deadline: Instant::now() + Duration::from_secs(15),
+                reply: Reply {
+                    sender: response,
+                    deadline: Instant::now() + Duration::from_secs(15),
+                },
             })
             .map_err(|_| "Audio engine is busy or unavailable".to_string())?;
         result
@@ -150,7 +163,22 @@ impl AudioEngine {
             .map_err(|_| "Audio operation timed out".to_string())?
     }
     pub fn play_file_with_id(&self, path: String, id: String) -> Result<(), String> {
-        self.send(Command::Play(path, id))
+        self.play_reserved(path, id, None, self.reserve_play())
+    }
+    pub(crate) fn reserve_play(&self) -> Stamp {
+        self.transport.advance()
+    }
+    pub(crate) fn play_reserved(
+        &self,
+        path: String,
+        id: String,
+        position: Option<f64>,
+        stamp: Stamp,
+    ) -> Result<(), String> {
+        if let Some(position) = position {
+            bounded(position, 0.0, 864000.0)?;
+        }
+        self.send(Command::Play(path, id, position, stamp))
     }
     pub fn queue_next_file_with_id(&self, path: String, id: String) -> Result<(), String> {
         self.send(Command::Queue(path, id))
@@ -159,6 +187,7 @@ impl AudioEngine {
         self.send(Command::Clear)
     }
     pub fn stop(&self) -> Result<(), String> {
+        self.transport.advance();
         self.send(Command::Stop)
     }
     pub fn set_paused(&self, value: bool) -> Result<(), String> {
@@ -169,7 +198,7 @@ impl AudioEngine {
     }
     pub fn seek(&self, value: f64) -> Result<(), String> {
         bounded(value, 0.0, 864000.0)?;
-        self.send(Command::Seek(value))
+        self.send(Command::Seek(value, self.transport.advance()))
     }
     pub fn set_volume(&self, value: f32) -> Result<(), String> {
         bounded(value as f64, 0.0, 1.0)?;
@@ -180,11 +209,19 @@ impl AudioEngine {
         self.send(Command::Speed(value))
     }
     pub fn set_equalizer_band(&self, index: usize, gain: f32) -> Result<(), String> {
-        if index >= 10 {
+        if index >= GRAPHIC_FREQUENCIES.len() {
             return Err("Invalid equalizer band".into());
         }
         bounded(gain as f64, -12.0, 12.0)?;
         self.send(Command::Eq(index, gain))
+    }
+    pub fn configure_equalizer(
+        &self,
+        settings: EqualizerSettings,
+        bypass: bool,
+    ) -> Result<(), String> {
+        settings.validate()?;
+        self.send(Command::ConfigureEq(settings, bypass))
     }
     pub fn set_purist_mode(&self, value: bool) -> Result<(), String> {
         self.send(Command::Purist(value))
@@ -211,10 +248,19 @@ impl AudioEngine {
     }
 }
 
-fn worker(app: AppHandle, receiver: mpsc::Receiver<Request>, shared: Arc<Mutex<AudioInfo>>) {
+fn worker(
+    app: AppHandle,
+    receiver: mpsc::Receiver<Request>,
+    shared: Arc<Mutex<AudioInfo>>,
+    preparation: Preparation,
+) {
     let signals = Arc::new(OutputSignals::default());
     let (notice_tx, notices) = mpsc::sync_channel(128);
-    let mut device = None;
+    let upcoming = Revision::default();
+    let route = Revision::default();
+    let mut device: Option<OutputPort> = None;
+    let mut opening = false;
+    let mut waiting_for_output: Option<Request> = None;
     let mut selected: Option<String> = None;
     let mut pipe = Pipeline::new();
     let mut pending = None;
@@ -225,205 +271,8 @@ fn worker(app: AppHandle, receiver: mpsc::Receiver<Request>, shared: Arc<Mutex<A
     let mut media = crate::media_session::Publisher::default();
     let fft = rustfft::FftPlanner::<f32>::new().plan_fft_forward(1024);
     loop {
-        if device.is_none() && retry.elapsed() > Duration::from_secs(2) {
-            retry = Instant::now();
-            match output::open(selected.as_deref(), signals.clone(), notice_tx.clone()) {
-                Ok(out) => {
-                    pipe.sample_rate = out.sample_rate;
-                    pipe.channels = out.channels;
-                    pipe.reset_dsp();
-                    device = Some(out);
-                    shared.lock().error = None;
-                    let _ = app.emit("audio_device_changed", ());
-                }
-                Err(error) => shared.lock().error = Some(error),
-            }
-        }
-        match receiver.try_recv() {
-            Ok(request) => {
-                let result = (|| -> Result<(), String> {
-                    check_deadline(request.deadline)?;
-                    match request.command {
-                        Command::Play(path, id) => {
-                            if device.is_none() {
-                                return Err("Connect an audio output device first".into());
-                            }
-                            let track = ResampledTrack::new(&path, id)?;
-                            check_deadline(request.deadline)?;
-                            let generation = signals.generation.fetch_add(1, Ordering::AcqRel) + 1;
-                            pending = None;
-                            pipe.set_current(track, generation);
-                            signals.paused.store(false, Ordering::Release);
-                            signals.playing.store(true, Ordering::Release);
-                        }
-                        Command::Queue(path, id) => {
-                            let track = ResampledTrack::new(&path, id)?;
-                            check_deadline(request.deadline)?;
-                            pipe.pending = Some(track);
-                        }
-                        Command::Clear => {
-                            pipe.pending = None;
-                        }
-                        Command::Stop => {
-                            signals.generation.fetch_add(1, Ordering::AcqRel);
-                            pending = None;
-                            pipe.stop();
-                            audible = None;
-                            signals.playing.store(false, Ordering::Release);
-                            signals.position.store(0.0_f64.to_bits(), Ordering::Release);
-                        }
-                        Command::Pause(value) => signals.paused.store(value, Ordering::Release),
-                        Command::Toggle => {
-                            if audible.is_none() {
-                                return Err("No track loaded".into());
-                            }
-                            signals.paused.fetch_xor(true, Ordering::AcqRel);
-                        }
-                        Command::Seek(position) => {
-                            let track = audible.as_ref().ok_or("No track loaded")?;
-                            if track.duration > 0.0 && position > track.duration {
-                                return Err("Seek exceeds track duration".into());
-                            }
-                            let mut replacement =
-                                ResampledTrack::new(&track.path, track.queue_id.clone())?;
-                            replacement.seek(position)?;
-                            check_deadline(request.deadline)?;
-                            let generation = signals.generation.fetch_add(1, Ordering::AcqRel) + 1;
-                            pending = None;
-                            pipe.set_current(replacement, generation);
-                            signals
-                                .position
-                                .store(position.to_bits(), Ordering::Release);
-                            signals.playing.store(true, Ordering::Release);
-                        }
-                        Command::Volume(value) => pipe.volume = value,
-                        Command::Speed(value) => pipe.speed = value,
-                        Command::Eq(index, value) => {
-                            pipe.gains[index] = value;
-                            pipe.reset_dsp();
-                        }
-                        Command::Purist(value) => {
-                            pipe.purist = value;
-                            pipe.reset_dsp();
-                        }
-                        Command::Crossfade(value) => pipe.crossfade = value,
-                        Command::Normalize(mode, preamp) => {
-                            pipe.normalization = mode;
-                            pipe.preamp_db = preamp;
-                        }
-                        Command::Device(id) => {
-                            // The decoder may already be on the next track while the
-                            // device is playing queued PCM. Rebuild the audible track.
-                            let restored = audible
-                                .as_ref()
-                                .map(|track| {
-                                    let mut restored =
-                                        ResampledTrack::new(&track.path, track.queue_id.clone())?;
-                                    restored.seek(
-                                        f64::from_bits(signals.position.load(Ordering::Acquire))
-                                            .min(track.duration.max(0.0)),
-                                    )?;
-                                    Ok::<_, String>(restored)
-                                })
-                                .transpose()?;
-                            let replacement =
-                                output::open(id.as_deref(), signals.clone(), notice_tx.clone())?;
-                            check_deadline(request.deadline)?;
-                            let generation = signals.generation.fetch_add(1, Ordering::AcqRel) + 1;
-                            pending = None;
-                            pipe.sample_rate = replacement.sample_rate;
-                            pipe.channels = replacement.channels;
-                            if let Some(track) = restored {
-                                let next = if pipe
-                                    .current
-                                    .as_ref()
-                                    .is_some_and(|current| current.queue_id != track.queue_id)
-                                {
-                                    pipe.current.take()
-                                } else {
-                                    pipe.pending.take()
-                                };
-                                pipe.set_current(track, generation);
-                                pipe.pending = next;
-                            } else {
-                                pipe.reset_dsp();
-                            }
-                            device = Some(replacement);
-                            selected = id;
-                            let _ = app.emit("audio_device_changed", ());
-                        }
-                    }
-                    Ok(())
-                })();
-                let _ = request.response.send(result);
-            }
-            Err(mpsc::TryRecvError::Disconnected) => break,
-            Err(mpsc::TryRecvError::Empty) => (),
-        }
-        if signals.device_failed.swap(false, Ordering::AcqRel) {
-            let generation = signals.generation.fetch_add(1, Ordering::AcqRel) + 1;
-            pending = None;
-            device = None;
-            signals.paused.store(true, Ordering::Release);
-            // Buffered decoding can be ahead of the audible track. Reconnect at
-            // the last consumed position rather than skipping queued audio.
-            let restored = audible
-                .as_ref()
-                .map(|track| {
-                    let mut replacement = ResampledTrack::new(&track.path, track.queue_id.clone())?;
-                    replacement.seek(f64::from_bits(signals.position.load(Ordering::Acquire)))?;
-                    Ok::<_, String>(replacement)
-                })
-                .transpose();
-            match restored {
-                Ok(Some(track)) => {
-                    let next = if pipe
-                        .current
-                        .as_ref()
-                        .is_some_and(|current| current.queue_id != track.queue_id)
-                    {
-                        pipe.current.take()
-                    } else {
-                        pipe.pending.take()
-                    };
-                    pipe.set_current(track, generation);
-                    pipe.pending = next;
-                }
-                Ok(None) => pipe.stop(),
-                Err(error) => {
-                    pipe.stop();
-                    audible = None;
-                    signals.playing.store(false, Ordering::Release);
-                    shared.lock().error = Some(error);
-                }
-            }
-            let _ = app.emit(
-                "audio_error",
-                "Audio device disconnected. Reconnect it and press play.",
-            );
-        }
-        let generation = signals.generation.load(Ordering::Acquire);
-        if let Some(out) = &device {
-            // Drop exhausted/stale PCM and event allocations on this worker.
-            while out.retired.try_recv().is_ok() {}
-            if !signals.paused.load(Ordering::Relaxed) {
-                if pending.is_none() {
-                    pending = pipe
-                        .next_block(generation)
-                        .or_else(|| pipe.terminal_block(generation));
-                }
-                if let Some(block) = pending.take() {
-                    match out.sender.try_send(block) {
-                        Ok(()) => (),
-                        Err(TrySendError::Full(block)) => pending = Some(block),
-                        Err(TrySendError::Disconnected(_)) => {
-                            signals.device_failed.store(true, Ordering::Release)
-                        }
-                    }
-                }
-            }
-        }
         while let Ok(notice) = notices.try_recv() {
+            let generation = signals.generation.load(Ordering::Acquire);
             match notice {
                 RenderNotice::Started {
                     generation: g,
@@ -442,6 +291,307 @@ fn worker(app: AppHandle, receiver: mpsc::Receiver<Request>, shared: Arc<Mutex<A
                 }
                 _ => (),
             }
+        }
+        if device
+            .as_ref()
+            .is_some_and(|out| out.failed.load(Ordering::Acquire))
+        {
+            device = None;
+            signals.generation.fetch_add(1, Ordering::AcqRel);
+            pending = None;
+            upcoming.advance();
+            signals.paused.store(true, Ordering::Release);
+            shared.lock().error =
+                Some("Audio device disconnected. Reconnect it and press play.".into());
+            let _ = app.emit(
+                "audio_error",
+                "Audio device disconnected. Reconnect it and press play.",
+            );
+        }
+        if device.is_none() && !opening && retry.elapsed() > Duration::from_secs(2) {
+            retry = Instant::now();
+            let job = DeviceJob {
+                id: selected.clone(),
+                stamp: route.advance(),
+                generation: signals.generation.load(Ordering::Acquire),
+                resume: audible.clone(),
+                speed: pipe.speed,
+                reply: None,
+            };
+            opening = preparation
+                .device(job, signals.clone(), notice_tx.clone())
+                .is_ok();
+        }
+
+        let request = if waiting_for_output.as_ref().is_some_and(|request| {
+            device.is_some() || !opening || Instant::now() >= request.reply.deadline
+        }) {
+            Ok(waiting_for_output.take().unwrap())
+        } else {
+            receiver.try_recv()
+        };
+        match request {
+            Ok(request)
+                if device.is_none()
+                    && opening
+                    && Instant::now() < request.reply.deadline
+                    && matches!(&request.command, Command::Play(..)) =>
+            {
+                // A file-association launch may reach playback while the first
+                // output is still opening. Keep processing other commands.
+                if let Some(previous) = waiting_for_output.replace(request) {
+                    previous
+                        .reply
+                        .finish(Err("A newer audio operation replaced this request.".into()));
+                }
+            }
+            Ok(Request { command, reply }) => {
+                let result = (|| -> Result<bool, String> {
+                    check_deadline(reply.deadline)?;
+                    let generation = signals.generation.load(Ordering::Acquire);
+                    let sample_rate = pipe.sample_rate;
+                    let speed = pipe.speed;
+                    let open_track = |action, path, queue_id, stamp| {
+                        preparation.track(TrackJob {
+                            action,
+                            path,
+                            queue_id,
+                            sample_rate,
+                            speed,
+                            stamp,
+                            generation,
+                            reply: reply.clone(),
+                        })?;
+                        Ok::<_, String>(true)
+                    };
+                    match command {
+                        Command::Play(path, id, position, stamp) => {
+                            if device.is_none() {
+                                return Err("Connect an audio output device first".into());
+                            }
+                            return open_track(TrackAction::Play(position), path, id, stamp);
+                        }
+                        Command::Queue(path, id) => {
+                            return open_track(TrackAction::Queue, path, id, upcoming.advance());
+                        }
+                        Command::Clear => {
+                            upcoming.advance();
+                            pipe.pending = None;
+                        }
+                        Command::Stop => {
+                            if let Some(start) = waiting_for_output.take() {
+                                start.reply.finish(Err("Playback was stopped.".into()));
+                            }
+                            upcoming.advance();
+                            signals.generation.fetch_add(1, Ordering::AcqRel);
+                            pending = None;
+                            pipe.stop();
+                            audible = None;
+                            signals.playing.store(false, Ordering::Release);
+                            signals.position.store(0.0_f64.to_bits(), Ordering::Release);
+                        }
+                        Command::Pause(value) => signals.paused.store(value, Ordering::Release),
+                        Command::Toggle => {
+                            if audible.is_none() {
+                                return Err("No track loaded".into());
+                            }
+                            signals.paused.fetch_xor(true, Ordering::AcqRel);
+                        }
+                        Command::Seek(position, stamp) => {
+                            let track = audible.as_ref().ok_or("No track loaded")?;
+                            if track.duration > 0.0 && position > track.duration {
+                                return Err("Seek exceeds track duration".into());
+                            }
+                            return open_track(
+                                TrackAction::Seek(position),
+                                track.path.clone(),
+                                track.queue_id.clone(),
+                                stamp,
+                            );
+                        }
+                        Command::Volume(value) => pipe.volume = value,
+                        Command::Speed(value) => pipe.speed = value,
+                        Command::Eq(index, value) => {
+                            let mut settings = pipe.eq_settings.clone();
+                            settings.graphic_gains[index] = f64::from(value);
+                            pipe.configure_eq(settings, pipe.purist);
+                        }
+                        Command::ConfigureEq(settings, bypass) => {
+                            pipe.configure_eq(settings, bypass)
+                        }
+                        Command::Purist(value) => pipe.bypass_eq(value),
+                        Command::Crossfade(value) => pipe.crossfade = value,
+                        Command::Normalize(mode, preamp) => {
+                            pipe.normalization = mode;
+                            pipe.preamp_db = preamp;
+                        }
+                        Command::Device(id) => {
+                            let job = DeviceJob {
+                                id,
+                                stamp: route.advance(),
+                                generation,
+                                resume: audible.clone(),
+                                speed,
+                                reply: Some(reply.clone()),
+                            };
+                            opening = false;
+                            preparation.device(job, signals.clone(), notice_tx.clone())?;
+                            opening = true;
+                            return Ok(true);
+                        }
+                    }
+                    Ok(false)
+                })();
+                match result {
+                    Ok(true) => (),
+                    Ok(false) => reply.finish(Ok(())),
+                    Err(error) => reply.finish(Err(error)),
+                }
+            }
+            Err(mpsc::TryRecvError::Disconnected) => break,
+            Err(mpsc::TryRecvError::Empty) => (),
+        }
+
+        while let Ok(prepared) = preparation.results.try_recv() {
+            match prepared {
+                Prepared::Track(job, result) => {
+                    let result = (|| {
+                        job.stamp.check(job.reply.deadline)?;
+                        let track = result?;
+                        let generation = signals.generation.load(Ordering::Acquire);
+                        match job.action {
+                            TrackAction::Queue if job.generation == generation => {
+                                pipe.pending = Some(track);
+                                return Ok(());
+                            }
+                            TrackAction::Queue => {
+                                return Err(
+                                    "Playback changed before the next track was ready.".into()
+                                )
+                            }
+                            TrackAction::Seek(_)
+                                if job.generation != generation
+                                    || audible.as_ref().map(|current| &current.queue_id)
+                                        != Some(&job.queue_id) =>
+                            {
+                                return Err("Playback changed before the seek was ready.".into());
+                            }
+                            _ => (),
+                        }
+                        if device.is_none() {
+                            return Err("Connect an audio output device first".into());
+                        }
+                        let next = if matches!(job.action, TrackAction::Seek(_)) {
+                            pipe.pending.take()
+                        } else {
+                            None
+                        };
+                        if matches!(job.action, TrackAction::Play(_)) {
+                            signals.paused.store(false, Ordering::Release);
+                        }
+                        let generation = signals.generation.fetch_add(1, Ordering::AcqRel) + 1;
+                        signals
+                            .position
+                            .store(track.position.to_bits(), Ordering::Release);
+                        upcoming.advance();
+                        pending = None;
+                        pipe.set_current(track, generation);
+                        pipe.pending = next;
+                        shared.lock().error = None;
+                        signals.playing.store(true, Ordering::Release);
+                        Ok(())
+                    })();
+                    job.reply.finish(result);
+                }
+                Prepared::Device(job, output, restored) => {
+                    let current = job.stamp.is_current();
+                    if current {
+                        opening = false;
+                    }
+                    let result = (|| {
+                        if !current
+                            || job.generation != signals.generation.load(Ordering::Acquire)
+                            || job.resume.as_ref().map(|track| &track.queue_id)
+                                != audible.as_ref().map(|track| &track.queue_id)
+                        {
+                            return Err("Playback changed before the output was ready.".into());
+                        }
+                        if let Some(reply) = &job.reply {
+                            check_deadline(reply.deadline)?;
+                        }
+                        let output = output?;
+                        if output.failed.load(Ordering::Acquire) {
+                            return Err(
+                                "The output device disconnected before it was ready.".into()
+                            );
+                        }
+                        let restored = if job.reply.is_some() {
+                            restored?
+                        } else {
+                            match restored {
+                                Ok(track) => track,
+                                Err(error) => {
+                                    pipe.stop();
+                                    audible = None;
+                                    signals.playing.store(false, Ordering::Release);
+                                    let _ = app.emit("audio_error", error);
+                                    None
+                                }
+                            }
+                        };
+                        drop(device.take());
+                        let generation = signals.generation.fetch_add(1, Ordering::AcqRel) + 1;
+                        pending = None;
+                        pipe.sample_rate = output.sample_rate;
+                        pipe.channels = output.channels;
+                        if let Some(track) = restored {
+                            let next = pipe.pending.take();
+                            signals
+                                .position
+                                .store(track.position.to_bits(), Ordering::Release);
+                            upcoming.advance();
+                            pipe.set_current(track, generation);
+                            pipe.pending = next;
+                        } else {
+                            pipe.reset_dsp();
+                        }
+                        device = Some(output);
+                        selected = job.id;
+                        shared.lock().error = None;
+                        let _ = app.emit("audio_device_changed", ());
+                        Ok(())
+                    })();
+                    if let Some(reply) = job.reply {
+                        reply.finish(result);
+                    } else if current {
+                        if let Err(error) = result {
+                            shared.lock().error = Some(error);
+                        }
+                    }
+                }
+            }
+        }
+        let generation = signals.generation.load(Ordering::Acquire);
+        if let Some(out) = &device {
+            // Drop exhausted/stale PCM and event allocations on this worker.
+            while out.retired.try_recv().is_ok() {}
+            if !signals.paused.load(Ordering::Relaxed) {
+                if pending.is_none() {
+                    pending = pipe
+                        .next_block(generation)
+                        .or_else(|| pipe.terminal_block(generation));
+                }
+                if let Some(block) = pending.take() {
+                    match out.sender.try_send(block) {
+                        Ok(()) => (),
+                        Err(TrySendError::Full(block)) => pending = Some(block),
+                        Err(TrySendError::Disconnected(_)) => {
+                            out.failed.store(true, Ordering::Release)
+                        }
+                    }
+                }
+            }
+            out.enabled.store(true, Ordering::Release);
         }
         if let Some(error) = pipe.render_error.take() {
             shared.lock().error = Some(error.clone());
@@ -475,6 +625,8 @@ fn worker(app: AppHandle, receiver: mpsc::Receiver<Request>, shared: Arc<Mutex<A
             }
             .into();
             info.is_purist = pipe.purist;
+            info.eq_mode = pipe.eq_settings.mode;
+            info.eq_preamp_db = pipe.applied_eq_preamp();
             info.crossfade_seconds = pipe.crossfade;
             info.normalization = pipe.normalization.clone();
             info.preamp_db = pipe.preamp_db;

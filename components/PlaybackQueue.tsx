@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLibrary } from '../context/LibraryContext';
+import { TrackArtwork } from './TrackArtwork';
 
 export function PlaybackQueue({ onClose }: { onClose: () => void }) {
   const library = useLibrary();
@@ -22,27 +23,31 @@ export function PlaybackQueue({ onClose }: { onClose: () => void }) {
   return (
     <aside
       aria-label="Play queue"
-      className="absolute right-0 top-10 bottom-20 w-96 max-w-full z-50 bg-neutral-950 border-l border-white/10 flex flex-col"
+      className="workspace-drawer flex flex-col"
       onKeyDown={(event) => {
         if (event.key === 'Escape') onClose();
       }}
     >
       <div className="p-4 flex justify-between">
-        <h2>Play queue</h2>
-        <button ref={close} onClick={onClose}>
+        <h2 className="text-base font-semibold">Play queue</h2>
+        <button className="button" ref={close} onClick={onClose}>
           Close
         </button>
       </div>
       <div className="px-4 pb-4 flex gap-4">
-        <button onClick={library.shuffleQueue}>Shuffle upcoming</button>
-        <button onClick={library.clearQueue}>Clear queue</button>
+        <button className="button" onClick={library.shuffleQueue}>
+          Shuffle upcoming
+        </button>
+        <button className="button" onClick={library.clearQueue}>
+          Clear queue
+        </button>
       </div>
       <div className="px-4 pb-3 flex gap-4 text-sm" aria-label="Queue pages">
         <span>{library.queueEntries.length} queued</span>
-        <button disabled={!offset} onClick={() => setPage(offset / 100 - 1)}>
+        <button className="button" disabled={!offset} onClick={() => setPage(offset / 100 - 1)}>
           Previous
         </button>
-        <button disabled={offset + 100 >= library.queueEntries.length} onClick={() => setPage(offset / 100 + 1)}>
+        <button className="button" disabled={offset + 100 >= library.queueEntries.length} onClick={() => setPage(offset / 100 + 1)}>
           Next
         </button>
       </div>
@@ -53,10 +58,13 @@ export function PlaybackQueue({ onClose }: { onClose: () => void }) {
             const found = byId.get(entry.trackId);
             const track = { ...found, name: found?.name || 'Loading track…', queueId: entry.id };
             return (
-              <li key={track.queueId} className={`rounded-lg p-3 ${track.queueId === library.currentQueueId ? 'bg-white/10' : ''}`}>
-                <button onClick={() => library.playQueueEntry(track.queueId)} className="text-left w-full">
-                  <span className="block truncate">{track.name}</span>
-                  <span className="text-xs text-neutral-400">{track.artist}</span>
+              <li key={track.queueId} className="queue-row" data-current={track.queueId === library.currentQueueId}>
+                <button onClick={() => library.playQueueEntry(track.queueId)} className="catalog-track">
+                  <TrackArtwork src={track.image} />
+                  <span className="catalog-track-text">
+                    <strong>{track.name}</strong>
+                    <span>{track.artist}</span>
+                  </span>
                 </button>
                 <div className="flex gap-3 mt-2 text-xs">
                   <button aria-label={`Move ${track.name} up`} onClick={() => library.moveQueueEntry(track.queueId, -1)}>

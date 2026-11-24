@@ -21,7 +21,6 @@ pub struct OutputSignals {
     pub position: AtomicU64,
     pub serial: AtomicU64,
     pub underruns: AtomicU64,
-    pub device_failed: AtomicBool,
 }
 
 impl Default for OutputSignals {
@@ -33,7 +32,6 @@ impl Default for OutputSignals {
             position: AtomicU64::new(0.0_f64.to_bits()),
             serial: AtomicU64::new(0),
             underruns: AtomicU64::new(0),
-            device_failed: AtomicBool::new(false),
         }
     }
 }
@@ -49,14 +47,26 @@ pub struct AudioBlock {
 }
 
 pub struct OutputDevice {
-    // Must be created and dropped exclusively on the engine owner thread.
-    pub _stream: cpal::Stream,
+    pub stream: cpal::Stream,
+    pub port: OutputPort,
+}
+
+pub struct OutputPort {
     pub sender: SyncSender<AudioBlock>,
     pub retired: Receiver<AudioBlock>,
     pub sample_rate: u32,
     pub channels: usize,
     pub name: String,
     pub sample_format: String,
+    pub enabled: Arc<AtomicBool>,
+    pub failed: Arc<AtomicBool>,
+    pub lease: Arc<()>,
+}
+
+impl Drop for OutputPort {
+    fn drop(&mut self) {
+        self.enabled.store(false, Ordering::Release);
+    }
 }
 
 pub fn list_devices() -> Result<Vec<AudioDeviceInfo>, String> {
@@ -96,6 +106,7 @@ pub fn open(
     selected: Option<&str>,
     signals: Arc<OutputSignals>,
     notices: SyncSender<RenderNotice>,
+    active: bool,
 ) -> Result<OutputDevice, String> {
     let host = cpal::default_host();
     let device = if let Some(name) = selected {
@@ -130,6 +141,8 @@ pub fn open(
     }
     let (sender, receiver) = sync_channel(QUEUED_BLOCKS);
     let (retire, retired) = sync_channel(QUEUED_BLOCKS + 2);
+    let enabled = Arc::new(AtomicBool::new(active));
+    let failed = Arc::new(AtomicBool::new(false));
     let state = CallbackState {
         receiver,
         retire,
@@ -139,30 +152,40 @@ pub fn open(
         offset: 0,
         channels: config.channels as usize,
     };
+    macro_rules! output_stream {
+        ($sample:ty) => {
+            build::<$sample>(&device, &config, state, enabled.clone(), failed.clone())
+        };
+    }
     let stream = match format {
-        cpal::SampleFormat::I8 => build::<i8>(&device, &config, state),
-        cpal::SampleFormat::I16 => build::<i16>(&device, &config, state),
-        cpal::SampleFormat::I32 => build::<i32>(&device, &config, state),
-        cpal::SampleFormat::I64 => build::<i64>(&device, &config, state),
-        cpal::SampleFormat::U8 => build::<u8>(&device, &config, state),
-        cpal::SampleFormat::U16 => build::<u16>(&device, &config, state),
-        cpal::SampleFormat::U32 => build::<u32>(&device, &config, state),
-        cpal::SampleFormat::U64 => build::<u64>(&device, &config, state),
-        cpal::SampleFormat::F32 => build::<f32>(&device, &config, state),
-        cpal::SampleFormat::F64 => build::<f64>(&device, &config, state),
+        cpal::SampleFormat::I8 => output_stream!(i8),
+        cpal::SampleFormat::I16 => output_stream!(i16),
+        cpal::SampleFormat::I32 => output_stream!(i32),
+        cpal::SampleFormat::I64 => output_stream!(i64),
+        cpal::SampleFormat::U8 => output_stream!(u8),
+        cpal::SampleFormat::U16 => output_stream!(u16),
+        cpal::SampleFormat::U32 => output_stream!(u32),
+        cpal::SampleFormat::U64 => output_stream!(u64),
+        cpal::SampleFormat::F32 => output_stream!(f32),
+        cpal::SampleFormat::F64 => output_stream!(f64),
         _ => return Err("The output device uses an unsupported sample format".into()),
     }?;
     stream
         .play()
         .map_err(|e| format!("Cannot start audio output: {e}"))?;
     Ok(OutputDevice {
-        _stream: stream,
-        sender,
-        retired,
-        sample_rate: config.sample_rate.0,
-        channels: config.channels as usize,
-        name,
-        sample_format: format.to_string(),
+        stream,
+        port: OutputPort {
+            sender,
+            retired,
+            sample_rate: config.sample_rate.0,
+            channels: config.channels as usize,
+            name,
+            sample_format: format.to_string(),
+            enabled,
+            failed,
+            lease: Arc::new(()),
+        },
     })
 }
 
@@ -259,14 +282,23 @@ fn build<T: SizedSample + FromSample<f32>>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     mut state: CallbackState,
+    enabled: Arc<AtomicBool>,
+    failed: Arc<AtomicBool>,
 ) -> Result<cpal::Stream, String> {
-    let error_signals = state.signals.clone();
     device
         .build_output_stream(
             config,
             move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
+                if !enabled.load(Ordering::Acquire) {
+                    data.fill(T::from_sample(0.0));
+                    return;
+                }
                 let mut underrun = false;
                 for dest in data {
+                    if !enabled.load(Ordering::Relaxed) {
+                        *dest = T::from_sample(0.0);
+                        continue;
+                    }
                     let sample = state.next_sample().unwrap_or_else(|| {
                         underrun = true;
                         0.0
@@ -281,7 +313,7 @@ fn build<T: SizedSample + FromSample<f32>>(
                 }
             },
             move |_| {
-                error_signals.device_failed.store(true, Ordering::Release);
+                failed.store(true, Ordering::Release);
             },
             None,
         )
@@ -306,7 +338,10 @@ mod tests {
     fn hardware_output_smoke() {
         let signals = Arc::new(OutputSignals::default());
         let (send_notices, _notices) = sync_channel(128);
-        let output = open(None, signals.clone(), send_notices).expect("open system default output");
+        let OutputDevice {
+            stream: _stream,
+            port: output,
+        } = open(None, signals.clone(), send_notices, true).expect("open system default output");
         signals.playing.store(true, Ordering::Release);
         for serial in 1..=8 {
             output
@@ -332,7 +367,7 @@ mod tests {
             8,
             "hardware callback consumed the final block"
         );
-        assert!(!signals.device_failed.load(Ordering::Acquire));
+        assert!(!output.failed.load(Ordering::Acquire));
         println!(
             "Silent hardware output passed: {} Hz, {} channels, {}, {} underruns",
             output.sample_rate,

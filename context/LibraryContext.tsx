@@ -74,8 +74,8 @@ interface LibraryContextType {
   getPlaylistTracks: (id: string) => Track[];
   duplicateGroups: Track[][];
   suggestions: QueueSuggestion[];
-  exportLibrary: () => Promise<string>;
-  restoreLibrary: (backup: string) => Promise<void>;
+  exportLibrary: () => Promise<string | null>;
+  restoreLibrary: (backup?: string) => Promise<void>;
   refreshLibrary: () => Promise<void>;
   scanProgress: ScanProgress | null;
   cancelScan: () => Promise<void>;
@@ -98,9 +98,11 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [activeQueueId, setActiveQueueId] = useState<string | null>(null);
   const activeIdRef = useRef<string | null>(null);
   const requestedId = useRef<string | null>(null);
-  const preloadedId = useRef<string | null>(null);
+  const deferredStart = useRef<string | null>(null);
+  const repeating = useRef<string | null>(null);
   const preloadKey = useRef('');
   const generation = useRef(0);
+  const selection = useRef(0);
   const [transition, setTransition] = useState(0);
   const commands = useRef<Promise<void>>(Promise.resolve());
   const writes = useRef<Promise<void>>(Promise.resolve());
@@ -296,27 +298,25 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const stop = useCallback(() => {
     generation.current += 1;
+    selection.current += 1;
     requestedId.current = null;
+    deferredStart.current = null;
+    repeating.current = null;
     activeIdRef.current = null;
-    preloadedId.current = null;
     preloadKey.current = '';
     setActiveQueueId(null);
     if (isNative())
-      void run(async () => {
+      void (async () => {
         await invoke('stop_audio');
         await refreshAudioInfo();
-      });
-  }, [run, refreshAudioInfo]);
+      })().catch(playerError);
+  }, [playerError, refreshAudioInfo]);
 
-  const playQueueEntry = useCallback(
-    (id: string) => {
+  const startEntry = useCallback(
+    (entry: QueueEntry, replacement?: QueueEntry[]) => {
       const current = snapshotRef.current;
-      const entry = current.queue.find((item) => item.id === id);
-      const track = current.tracks.find((item) => item.id === entry?.trackId);
-      if (!entry || (!track && !isNative())) {
-        reportError('This queue item is no longer in the library.');
-        return;
-      }
+      const { id, trackId } = entry;
+      const track = current.tracks.find((item) => item.id === trackId);
       if (track && (!track.path || track.missing)) {
         reportError('This file is unavailable. Import its folder again to reconnect it.');
         return;
@@ -326,18 +326,35 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
         return;
       }
       const request = ++generation.current;
+      selection.current += 1;
       const position = current.session.currentQueueId === id && !activeIdRef.current ? current.session.position : 0;
       requestedId.current = id;
       preloadKey.current = '';
-      preloadedId.current = null;
       setError(null);
       setLoading();
-      update((value) => ({ ...value, session: { ...value.session, currentQueueId: id, position } }));
-      void run(async () => {
+      void (async () => {
+        const playing = parseTrack(await native.playLibraryTrack(trackId, id, position || null));
         if (request !== generation.current) return;
-        const playing = parseTrack(await native.playLibraryTrack(entry.trackId, id));
+        const queue = replacement ?? snapshotRef.current.queue;
+        if (!queue.some((item) => item.id === id)) {
+          // The requested entry was removed while its decoder was being opened.
+          const next = nextQueueEntry(snapshotRef.current);
+          if (next) startEntry(next);
+          else stop();
+          return;
+        }
+        activeIdRef.current = id;
+        deferredStart.current = null;
+        repeating.current = null;
+        setActiveQueueId(id);
         update((value) => ({
           ...value,
+          queue,
+          session: {
+            ...value.session,
+            currentQueueId: id,
+            position: !playing.duration || position < playing.duration ? position : 0,
+          },
           tracks: mergeTracks(value.tracks, [
             preserveUserMetadata(
               playing,
@@ -345,17 +362,60 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
             ),
           ]),
         }));
-        if (request !== generation.current) return;
-        activeIdRef.current = id;
-        setActiveQueueId(id);
-        requestedId.current = null;
-        if (position > 0 && (!playing.duration || position < playing.duration)) await native.seekAudio(position);
-        setTransition((value) => value + 1);
-        await refreshAudioInfo();
-      });
+      })()
+        .catch((reason) => {
+          if (request !== generation.current) return;
+          reportError(reason);
+          playerError(reason);
+        })
+        .finally(() => {
+          if (request !== generation.current) return;
+          requestedId.current = null;
+          setTransition((value) => value + 1);
+          void refreshAudioInfo();
+        });
     },
-    [reportError, run, setLoading, update, refreshAudioInfo],
+    [reportError, playerError, setLoading, stop, update, refreshAudioInfo],
   );
+
+  const playQueueEntry = useCallback(
+    (id: string) => {
+      const entry = snapshotRef.current.queue.find((item) => item.id === id);
+      if (entry) startEntry(entry);
+      else reportError('This queue item is no longer in the library.');
+    },
+    [startEntry, reportError],
+  );
+
+  const acceptStarted = useCallback(
+    (id: string) => {
+      if (requestedId.current) {
+        deferredStart.current = id;
+        return;
+      }
+      const repeatsAudibleEntry = repeating.current === id;
+      repeating.current = null;
+      if (!activeIdRef.current || (id === activeIdRef.current && !repeatsAudibleEntry)) return;
+      const next = nextQueueEntry(snapshotRef.current);
+      if (next?.id !== id) {
+        if (next) playQueueEntry(next.id);
+        else stop();
+        return;
+      }
+      activeIdRef.current = id;
+      preloadKey.current = '';
+      setActiveQueueId(id);
+      setTransition((value) => value + 1);
+      update((current) => ({ ...current, session: { ...current.session, currentQueueId: id, position: 0 } }));
+    },
+    [playQueueEntry, stop, update],
+  );
+  useEffect(() => {
+    const id = deferredStart.current;
+    if (requestedId.current || !id) return;
+    deferredStart.current = null;
+    acceptStarted(id);
+  }, [transition, acceptStarted]);
 
   const playById = useCallback(
     (id: string) => {
@@ -370,12 +430,16 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
         return;
       }
       if (isNative()) {
+        const request = ++selection.current;
         void (async () => {
           const ids = await native.libraryTrackIds(null);
+          if (request !== selection.current) return;
           if (!ids.includes(id)) throw new Error('This track is missing. Locate its file before playing.');
           const queue = ids.map(queueEntry);
-          update((value) => ({ ...value, queue, session: { ...value.session, currentQueueId: null, position: 0 } }));
-          playQueueEntry(queue.find((entry) => entry.trackId === id)!.id);
+          startEntry(
+            queue.find((entry) => entry.trackId === id)!,
+            queue,
+          );
         })().catch(reportError);
         return;
       }
@@ -388,7 +452,7 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
       update((value) => ({ ...value, queue, session: { ...value.session, currentQueueId: null, position: 0 } }));
       playQueueEntry(entry.id);
     },
-    [playQueueEntry, reportError, update],
+    [playQueueEntry, startEntry, reportError, update],
   );
 
   useEffect(() => {
@@ -467,19 +531,12 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const key = `${activeQueueId}:${next?.id ?? ''}:${track?.path ?? ''}:${transition}`;
     if (preloadKey.current === key) return;
     preloadKey.current = key;
-    preloadedId.current = null;
     const request = generation.current;
     void run(async () => {
       if (preloadKey.current !== key || request !== generation.current) return;
       await invoke('clear_pending');
       if (next && !track?.missing && preloadKey.current === key && request === generation.current) {
-        preloadedId.current = next.id;
-        try {
-          await native.queueLibraryTrack(next.trackId, next.id);
-        } catch (reason) {
-          preloadedId.current = null;
-          throw reason;
-        }
+        await native.queueLibraryTrack(next.trackId, next.id);
       }
     });
   }, [snapshot, ready, activeQueueId, transition, run]);
@@ -759,13 +816,14 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const playPlaylist = useCallback(
     (id: string) => {
       if (isNative()) {
+        const request = ++selection.current;
         void (async () => {
           if (!(await save())) return;
           const ids = await native.libraryTrackIds(id);
+          if (request !== selection.current) return;
           if (!ids.length) throw new Error('This playlist has no available tracks.');
           const queue = ids.map(queueEntry);
-          update((current) => ({ ...current, queue, session: { ...current.session, currentQueueId: null, position: 0 } }));
-          playQueueEntry(queue[0].id);
+          startEntry(queue[0], queue);
         })().catch(reportError);
         return;
       }
@@ -778,28 +836,35 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
       update((current) => ({ ...current, queue, session: { ...current.session, currentQueueId: null, position: 0 } }));
       playQueueEntry(queue[0].id);
     },
-    [getPlaylistTracks, playQueueEntry, reportError, update, save],
+    [getPlaylistTracks, playQueueEntry, startEntry, reportError, update, save],
   );
 
   const exportLibrary = useCallback(async () => {
     if (!(await save())) throw new Error('Save your pending library changes before exporting.');
-    return isNative() ? invoke<string>('library_export') : JSON.stringify(parseLibrarySnapshot(snapshotRef.current), null, 2);
+    if (isNative()) {
+      await native.saveLibraryBackup();
+      return null;
+    }
+    return JSON.stringify(parseLibrarySnapshot(snapshotRef.current), null, 2);
   }, [save]);
   const restoreLibrary = useCallback(
-    async (backup: string) => {
-      if (new TextEncoder().encode(backup).byteLength > LIBRARY_LIMITS.maxBackupBytes)
+    async (backup?: string) => {
+      if (backup !== undefined && new TextEncoder().encode(backup).byteLength > LIBRARY_LIMITS.maxBackupBytes)
         throw new Error('This backup exceeds the 64 MiB import limit.');
-      const validated = parseLibrarySnapshot(JSON.parse(backup));
+      const validated = backup === undefined ? null : parseLibrarySnapshot(JSON.parse(backup));
+      if (!(await save())) throw new Error('Save your pending library changes before restoring.');
       busy.current += 1;
       try {
         await writes.current;
         let restored = validated;
         if (isNative()) {
-          const header = await native.libraryRestoreCatalog(JSON.stringify(validated));
+          const header = validated ? await native.libraryRestoreCatalog(JSON.stringify(validated)) : await native.openLibraryBackup();
+          if (!header) return;
           restored = nativeSession.current.adopt(header);
           setTotalTracks(header.trackCount);
           setCatalogRevision(header.catalogRevision);
         }
+        if (!restored) return;
         stop();
         update(() => restored);
         readyRef.current = true;
@@ -863,25 +928,17 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
         if (active) reportError(reason);
       }
     };
-    const started = (event: { queue_id: string }) => {
-      const id = event.queue_id;
-      if (!snapshotRef.current.queue.some((entry) => entry.id === id)) return;
-      if (requestedId.current && requestedId.current !== id) return;
-      if (!requestedId.current && id !== activeIdRef.current && id !== preloadedId.current) return;
-      activeIdRef.current = id;
-      requestedId.current = null;
-      preloadedId.current = null;
-      preloadKey.current = '';
-      setActiveQueueId(id);
-      setTransition((value) => value + 1);
-      update((current) => ({ ...current, session: { ...current.session, currentQueueId: id, position: 0 } }));
-    };
-    void attach<{ queue_id: string }>('track_started', started);
+    void attach<{ queue_id: string }>('track_started', ({ queue_id }) => acceptStarted(queue_id));
     void attach<{ queue_id: string; next_queue_id?: string | null }>('track_ended', (event) => {
-      if (event.queue_id !== activeIdRef.current || requestedId.current) return;
-      if (event.next_queue_id) return; // The engine will emit track_started for its committed transition.
+      if (event.queue_id !== activeIdRef.current) return;
+      if (event.next_queue_id) {
+        // The engine will emit a start for the committed transition, including a loop of the same entry.
+        repeating.current = event.next_queue_id === event.queue_id ? event.queue_id : null;
+        return;
+      }
       activeIdRef.current = null;
       setActiveQueueId(null);
+      if (requestedId.current) return;
       const next = nextQueueEntry(snapshotRef.current);
       if (next) playQueueEntry(next.id);
     });
@@ -894,7 +951,7 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const now = performance.now();
       const elapsed = Math.min(2, Math.max(0, (now - lastTime) / 1000));
       lastTime = now;
-      if (!event.queue_id || event.queue_id !== activeIdRef.current || requestedId.current) return;
+      if (!event.queue_id || event.queue_id !== activeIdRef.current) return;
       const entry = snapshotRef.current.queue.find((item) => item.id === event.queue_id);
       if (!entry) return;
       if (statsId !== entry.id) {
@@ -958,7 +1015,7 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
       active = false;
       cleanups.forEach((cleanup) => cleanup());
     };
-  }, [handleNext, handlePrev, playQueueEntry, reportError, update, getTracks, stop]);
+  }, [acceptStarted, handleNext, handlePrev, playQueueEntry, reportError, update, getTracks, stop]);
 
   const dispatch = useCallback(
     (action: LibraryAction) => {

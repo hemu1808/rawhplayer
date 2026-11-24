@@ -1,4 +1,5 @@
 import { DEFAULT_EQ_BANDS, type EqualizerBand } from '../types';
+import { EQ_ADVANCED_KEY, validAdvancedEq, type AdvancedEqualizer } from './equalizerSettings';
 const KEY = 'rawh_device_eq_profiles_v1';
 const VOLUME_KEY = 'rawh_device_volume_profiles_v1';
 
@@ -27,21 +28,44 @@ export function validBands(value: unknown): value is EqualizerBand[] {
     )
   );
 }
-export function readDeviceProfile(device: string): EqualizerBand[] | undefined {
+function profileBands(value: unknown): EqualizerBand[] | undefined {
+  if (validBands(value)) return value;
+  if (!value || typeof value !== 'object') return;
+  const bands = (value as Record<string, unknown>).bands;
+  return validBands(bands) ? bands : undefined;
+}
+
+function readProfile(device: string): unknown {
   try {
     const data: unknown = JSON.parse(localStorage.getItem(KEY) || '{}');
     if (!data || typeof data !== 'object' || Array.isArray(data)) return;
-    const profile = (data as Record<string, unknown>)[device];
-    return validBands(profile) ? profile : undefined;
+    return Object.hasOwn(data, device) ? (data as Record<string, unknown>)[device] : undefined;
   } catch {
     return;
   }
+}
+
+export function readDeviceProfile(device: string): EqualizerBand[] | undefined {
+  return profileBands(readProfile(device));
+}
+
+export function readDeviceAdvancedEq(device: string): AdvancedEqualizer | undefined {
+  const profile = readProfile(device);
+  if (!profile || typeof profile !== 'object') return;
+  const advanced = (profile as Record<string, unknown>).advanced;
+  return validAdvancedEq(advanced) ? advanced : undefined;
 }
 export function saveDeviceProfile(device: string, volume?: number): void {
   if (volume !== undefined && (!Number.isFinite(volume) || volume < 0 || volume > 1))
     throw new Error('Choose a volume between 0 and 100%.');
   const current: unknown = JSON.parse(localStorage.getItem('rawh_eq_bands') || 'null');
   if (!validBands(current)) throw new Error('Set valid EQ bands before saving a device profile.');
+  let advanced: unknown;
+  try {
+    advanced = JSON.parse(localStorage.getItem(EQ_ADVANCED_KEY) || 'null');
+  } catch {
+    /* Retain the valid graphic bands when advanced settings are unavailable. */
+  }
   let saved: Record<string, unknown> = {};
   try {
     const value: unknown = JSON.parse(localStorage.getItem(KEY) || '{}');
@@ -50,9 +74,10 @@ export function saveDeviceProfile(device: string, volume?: number): void {
     /* Explicit save replaces invalid profiles. */
   }
   const entries = Object.entries(saved)
-    .filter(([key, value]) => key !== device && validBands(value))
+    .filter(([key, value]) => key !== device && profileBands(value))
     .slice(-99);
-  localStorage.setItem(KEY, JSON.stringify(Object.fromEntries([...entries, [device, current]])));
+  const profile = validAdvancedEq(advanced) ? { bands: current, advanced } : current;
+  localStorage.setItem(KEY, JSON.stringify(Object.fromEntries([...entries, [device, profile]])));
   if (volume !== undefined) {
     let profiles: Record<string, unknown> = {};
     try {

@@ -18,6 +18,115 @@ fn seed(library: &NativeLibrary, count: usize) {
     }
     tx.commit().unwrap();
 }
+
+#[test]
+fn file_backup_round_trips_playlists_and_legacy_json() {
+    let source = Fixture::new();
+    let library = source.library();
+    let media = source.wav("recording.wav");
+    library.authorize_paths(&[path_string(&media)]).unwrap();
+    let id = library.import_paths(vec![path_string(&media)]).unwrap()[0]
+        .id
+        .clone();
+    let mut snapshot = library.load().unwrap();
+    snapshot.tracks[0].is_liked = true;
+    snapshot.queue.push(QueueEntry {
+        id: "queued".into(),
+        track_id: id.clone(),
+    });
+    snapshot.session.current_queue_id = Some("queued".into());
+    snapshot.session.position = 0.05;
+    snapshot.playlists.push(Playlist {
+        id: "playlist".into(),
+        name: "Favorites".into(),
+        track_ids: vec![id.clone(), id.clone()],
+        smart_rule: None,
+        created_at: 0,
+    });
+    library.save(snapshot).unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let backup = files.path().join("backup.json");
+    library.export_file(&backup).unwrap();
+    let target = Fixture::new();
+    let restored = target.library();
+    restored.restore_file(&backup).unwrap();
+    let after = restored.load().unwrap();
+    assert_eq!(after.tracks[0].id, id);
+    assert!(after.tracks[0].is_liked && after.tracks[0].missing);
+    assert_eq!(after.queue[0].track_id, id);
+    assert_eq!(after.session.position, 0.05);
+    assert_eq!(after.playlists[0].track_ids, [id.clone(), id.clone()]);
+    fs::write(&backup, library.export().unwrap()).unwrap();
+    restored.restore_file(&backup).unwrap();
+    assert_eq!(restored.load().unwrap().tracks[0].id, id);
+    fs::write(&backup, "{\"schemaVersion\":1,\"tracks\":[").unwrap();
+    assert!(restored.restore_file(&backup).is_err());
+    assert_eq!(restored.load().unwrap().tracks[0].id, id);
+}
+
+#[test]
+#[ignore = "explicit full-catalog backup round-trip; run npm run test:native:backup"]
+fn backup_round_trips_maximum_catalog() {
+    let source_fixture = Fixture::new();
+    let target_fixture = Fixture::new();
+    let source = source_fixture.library();
+    let target = target_fixture.library();
+    seed(&source, MAX_TRACKS);
+    let files = tempfile::tempdir().unwrap();
+    let backup = files.path().join("full-library.json");
+    source.export_file(&backup).unwrap();
+    let bytes = fs::metadata(&backup).unwrap().len();
+    println!("Streamed {bytes} bytes for {MAX_TRACKS} library tracks.");
+    assert!(bytes > MAX_BACKUP_BYTES as u64);
+    target.restore_file(&backup).unwrap();
+    assert_eq!(target.bootstrap().unwrap().track_count, MAX_TRACKS as u64);
+}
+
+#[test]
+fn incremental_reconciliation_preserves_renames_and_limits_availability_checks() {
+    let fixture = Fixture::new();
+    let original = fixture.wav("original.wav");
+    let root = original.parent().unwrap();
+    let album = root.join("album.old");
+    fs::create_dir(&album).unwrap();
+    let source = album.join("song.wav");
+    fs::rename(&original, &source).unwrap();
+    let unrelated = fixture.wav("unrelated.wav");
+    let library = fixture.library();
+    let root_path = path_string(root);
+    library
+        .authorize_paths(std::slice::from_ref(&root_path))
+        .unwrap();
+    library.add_watched_folder(&root_path).unwrap();
+    let tracks = library
+        .import_paths(vec![path_string(&source), path_string(&unrelated)])
+        .unwrap();
+    let id = tracks[0].id.clone();
+    let other = tracks[1].id.clone();
+    fs::remove_file(&unrelated).unwrap();
+    // A directory event only checks that directory, even if a sibling disappeared.
+    library
+        .reconcile_paths(&[album.clone()].into_iter().collect(), |_| {})
+        .unwrap();
+    assert!(!library.track(&other).unwrap().missing);
+    // Mark the sibling available again during rename detection to keep the
+    // fixture's identical waveforms from producing an ambiguous identity match.
+    fixture.wav("unrelated.wav");
+    let renamed = root.join("album.new");
+    fs::rename(&album, &renamed).unwrap();
+    library
+        .reconcile_paths(&[album, renamed.clone()].into_iter().collect(), |_| {})
+        .unwrap();
+    let track = library.track(&id).unwrap();
+    assert!(!track.missing);
+    assert!(Path::new(&track.path).ends_with(Path::new("album.new").join("song.wav")));
+    fs::remove_file(renamed.join("song.wav")).unwrap();
+    fs::remove_dir(&renamed).unwrap();
+    library
+        .reconcile_paths(&[renamed].into_iter().collect(), |_| {})
+        .unwrap();
+    assert!(library.track(&id).unwrap().missing);
+}
 #[test]
 fn catalog_pages_search_groups_and_bootstrap_are_bounded() {
     let fixture = Fixture::new();

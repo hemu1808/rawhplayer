@@ -14,7 +14,7 @@ Updated 2026-11-08 on `update/Features`. The user selected the first five improv
 
 ## Next work
 
-1. Move slow decoder/device preparation off the worker that feeds audio. Preserve generation/deadline checks and measure slow-disk, rapid-selection and hotplug underruns.
+1. Measure slow-disk, rapid-selection and hotplug underruns with the new decoder and device preparation workers. Include steady-state reads from slow or removable storage.
 2. Replace device-name profile keys with stable native device identities, then evaluate exclusive output adapters and format negotiation. Physical measurements are required before a bit-perfect claim.
 3. Add scheduled metadata snapshots, restore previews and conflict-aware batch tagging. Keep original audio and metadata undo recoverable.
 4. Add the full codec, installer/update/recovery, sleep/hotplug and assistive-technology test matrices. Exercise system lock-screen/headset controls on Windows and the native implementation on macOS/Linux.

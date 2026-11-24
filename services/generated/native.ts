@@ -50,6 +50,12 @@ async libraryExport() : Promise<string> {
 async libraryRestore(backup: string) : Promise<LibrarySnapshot> {
     return await TAURI_INVOKE("library_restore", { backup });
 },
+async saveLibraryBackup() : Promise<boolean> {
+    return await TAURI_INVOKE("save_library_backup");
+},
+async openLibraryBackup() : Promise<LibraryHeader | null> {
+    return await TAURI_INVOKE("open_library_backup");
+},
 async libraryWaveform(trackId: string, bins: number | null) : Promise<Waveform> {
     return await TAURI_INVOKE("library_waveform", { trackId, bins });
 },
@@ -82,6 +88,12 @@ async searchYoutube(query: string) : Promise<JsonValue> {
 },
 async setEqualizerBand(index: number, gain: number) : Promise<null> {
     return await TAURI_INVOKE("set_equalizer_band", { index, gain });
+},
+async configureEqualizer(settings: EqualizerSettings, bypass: boolean) : Promise<null> {
+    return await TAURI_INVOKE("configure_equalizer", { settings, bypass });
+},
+async previewEqualizer(settings: EqualizerSettings, sampleRate: number) : Promise<EqualizerResponse> {
+    return await TAURI_INVOKE("preview_equalizer", { settings, sampleRate });
 },
 async setPuristMode(isPurist: boolean) : Promise<null> {
     return await TAURI_INVOKE("set_purist_mode", { isPurist });
@@ -164,8 +176,8 @@ async libraryGroups(kind: string, offset: number) : Promise<CatalogGroup[]> {
 async libraryPatch(patch: LibraryPatch) : Promise<PatchReceipt> {
     return await TAURI_INVOKE("library_patch", { patch });
 },
-async playLibraryTrack(trackId: string, queueId: string) : Promise<LibraryTrack> {
-    return await TAURI_INVOKE("play_library_track", { trackId, queueId });
+async playLibraryTrack(trackId: string, queueId: string, position: number | null) : Promise<LibraryTrack> {
+    return await TAURI_INVOKE("play_library_track", { trackId, queueId, position });
 },
 async queueLibraryTrack(trackId: string, queueId: string) : Promise<LibraryTrack> {
     return await TAURI_INVOKE("queue_library_track", { trackId, queueId });
@@ -224,7 +236,7 @@ trackStarted: "track_started"
 
 export type AnalysisProgress = { jobId: string; running: boolean; processed: number; total: number; cached: number; failed: number; current: string | null; percent: number; cancelled: boolean; error: string | null }
 export type AudioDeviceInfo = { id: string; name: string; is_default: boolean }
-export type AudioInfo = { sample_rate: number; bit_depth: number; channels: number; device_name: string | null; output_sample_rate: number | null; output_channels: number | null; output_format: string | null; resampler: string; queue_id: string | null; path: string | null; current_time: number; duration: number; is_playing: boolean; volume: number; playback_rate: number; is_purist: boolean; crossfade_seconds: number; normalization: string; preamp_db: number; clipping_count: number; underrun_count: number; ready: boolean; error: string | null }
+export type AudioInfo = { sample_rate: number; bit_depth: number; channels: number; device_name: string | null; output_sample_rate: number | null; output_channels: number | null; output_format: string | null; resampler: string; queue_id: string | null; path: string | null; current_time: number; duration: number; is_playing: boolean; volume: number; playback_rate: number; is_purist: boolean; eq_mode: EqualizerMode; eq_preamp_db: number; crossfade_seconds: number; normalization: string; preamp_db: number; clipping_count: number; underrun_count: number; ready: boolean; error: string | null }
 export type CatalogChanged = { revision: number; trackCount: number }
 export type CatalogGroup = { name: string; tracks: number }
 export type CatalogPage = { revision: number; total: number; offset: number; limit: number; tracks: LibraryTrack[] }
@@ -233,7 +245,11 @@ export type CatalogSort = "recent" | "title" | "artist"
 export type CredentialStatus = { gemini: boolean; youtube: boolean }
 export type DuplicatePreview = { tracks: LibraryTrack[]; total: number }
 export type EndedEvent = { queue_id: string; path: string; next_queue_id: string | null; reason: string }
+export type EqualizerMode = "graphic" | "parametric"
+export type EqualizerResponse = { sampleRate: number; appliedPreampDb: number; points: ResponsePoint[] }
+export type EqualizerSettings = { mode: EqualizerMode; graphicGains: number[]; filters: ParametricBand[]; preampDb: number; autoHeadroom: boolean }
 export type ErrorCode = "INVALID_INPUT" | "CONFLICT" | "NOT_FOUND" | "UNAVAILABLE" | "INTERNAL"
+export type FilterKind = "peak" | "lowShelf" | "highShelf" | "lowPass" | "highPass" | "notch"
 export type IpcError = { code: ErrorCode; message: string; retryable: boolean }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
 export type LibraryHeader = { revision: number; catalogRevision: number; trackCount: number; state: LibrarySnapshot; initialTracks: LibraryTrack[] }
@@ -242,12 +258,14 @@ export type LibrarySnapshot = { schemaVersion: number; tracks?: LibraryTrack[]; 
 export type LibraryTrack = { id: string; path: string; name: string; artist: string; album: string | null; format: string | null; artworkPath: string | null; duration: number | null; dateAdded: number | null; source: string | null; bitrate: number | null; sampleRate: number | null; bitDepth: number | null; year: string | null; genre: string | null; isLiked: boolean; missing: boolean; playCount: number; listeningSeconds: number; replayGainTrack: number | null; replayGainAlbum: number | null; trackNumber: number | null; fingerprint: string | null; sourceModified: string | null; analysis: TrackAnalysis | null }
 export type MaintenancePage = { missing: LibraryTrack[]; missingTotal: number; duplicates: DuplicatePreview[]; duplicateTotal: number }
 export type MetadataEdit = { name: string; artist: string; album: string | null; genre: string | null; year: number | null; trackNumber: number | null }
+export type ParametricBand = { kind: FilterKind; frequency: number; gain: number; q: number; enabled: boolean }
 export type PatchReceipt = { revision: number; catalogRevision: number }
 export type PlaybackSession = { currentQueueId: string | null; position?: number; playbackMode: string }
 export type Playlist = { id: string; name: string; trackIds?: string[]; smartRule: SmartRule | null; createdAt?: number }
 export type Policy = { allowUpdates: boolean; allowExternalServices: boolean; allowMetadataEdits: boolean }
 export type QueueEntry = { id: string; trackId: string }
 export type QueueOperation = { kind: "insert"; entry: QueueEntry; afterId: string | null } | { kind: "remove"; id: string } | { kind: "move"; id: string; beforeId: string | null }
+export type ResponsePoint = { frequency: number; gain: number }
 export type SmartRule = { query: string | null; artist: string | null; genre: string | null; format: string | null; likedOnly: boolean; unplayedOnly: boolean; addedWithinDays: number | null; minSampleRate: number | null }
 export type TrackAnalysis = { version: number; contentHash: string; analyzedSeconds: number; complete: boolean; bpm: number | null; bpmConfidence: number; musicalKey: string | null; keyConfidence: number; integratedLufs: number | null; truePeakDb: number | null; energy: number }
 export type TrackEvent = { queue_id: string; path: string; duration: number; sample_rate: number; bit_depth: number; channels: number; format: string }

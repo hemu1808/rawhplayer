@@ -12,14 +12,14 @@ function cargo(args) {
 if (process.argv[2] === 'generate') {
   env.RAWH_GENERATE_IPC = '1';
   cargo(['test', '--manifest-path', 'src-tauri/Cargo.toml', '--lib', 'ipc::tests::generated_contracts_are_current']);
-} else if (process.argv[2] === 'benchmark') {
+} else if (process.argv[2] === 'benchmark' || process.argv[2] === 'backup') {
   cargo([
     'test',
     '--locked',
     '--manifest-path',
     'src-tauri/Cargo.toml',
     '--lib',
-    'library_scale_benchmark',
+    process.argv[2] === 'backup' ? 'backup_round_trips_maximum_catalog' : 'library_scale_benchmark',
     '--',
     '--ignored',
     '--nocapture',

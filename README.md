@@ -7,6 +7,7 @@ The November repairs and reproducible checks are described in [docs/VALIDATION.m
 ## Implemented
 
 - Native Symphonia decoding and CPAL output on a dedicated worker, with a bounded output queue, seeking, volume, playback speed, equalizer bypass, gapless transitions, crossfade and tagged ReplayGain.
+- Native 10-band graphic EQ and an eight-filter parametric mode with bell, shelf, low-pass, high-pass and notch filters. The equalizer includes a preamp, estimated automatic headroom, a calculated response at the output sample rate and per-device profiles.
 - SQLite library, separate playback queue, favorites, saved playlists and editable smart playlists. Queue removal preserves library records. Missing-file repair preserves track identities; duplicate review removes library entries without deleting audio.
 - Native file/folder import and drops, scoped file access, watched folders with startup scans and rename/delete/reconnect reconciliation. File associations import the chosen audio and play it in the existing player; launch requests wait until the library is ready.
 - Local lyrics, artwork, waveform cache and signal-path details. Source and output formats are reported separately.
@@ -38,6 +39,7 @@ npm run check
 npm run format:check
 npm run test:e2e
 npm run check:native
+npm run test:native:backup # optional full-catalog round trip
 npm run generate:ipc # after changing Rust command/event signatures
 cargo fmt --manifest-path src-tauri/Cargo.toml --check
 cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
@@ -51,5 +53,7 @@ Install Chromium with `npx playwright install chromium` before browser tests. Th
 ## Data and releases
 
 Music stays in the selected folders. The database, artwork, waveforms and metadata-edit recovery copies live in the application's data directory. Backups include file paths and metadata, but do not contain audio or credentials. See [PRIVACY.md](PRIVACY.md).
+
+On desktop, Settings opens native save and restore dialogs for JSON backups up to 512 MiB. Older version-1 JSON backups remain readable. Re-import the music folders on a new machine to grant access to the restored paths.
 
 The [release runbook](docs/RELEASING.md) describes signing configuration, managed update controls and manual launch gates. The workflow creates a draft release; publishing is a separate action.

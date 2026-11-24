@@ -55,6 +55,15 @@ impl NativeLibrary {
                 .map_err(error)?;
         }
         mutations::migrate(&db)?;
+        db.execute_batch(
+            "CREATE INDEX IF NOT EXISTS tracks_fingerprint ON tracks(json_extract(data,'$.fingerprint'));",
+        )
+        .map_err(error)?;
+        #[cfg(windows)]
+        db.execute_batch(
+            "CREATE INDEX IF NOT EXISTS tracks_path_nocase ON tracks(path COLLATE NOCASE);",
+        )
+        .map_err(error)?;
         let grants = {
             let mut statement = db.prepare("SELECT path FROM grants").map_err(error)?;
             let values = statement
@@ -103,32 +112,51 @@ impl NativeLibrary {
         let path = fs::canonicalize(path).map_err(|_| {
             "The file is unavailable. Reconnect the drive or locate the file.".to_string()
         })?;
-        if self
-            .grants
-            .lock()
-            .iter()
-            .any(|root| path == *root || (root.is_dir() && path.starts_with(root)))
-        {
+        let parents = {
+            let grants = self.grants.lock();
+            if grants.contains(&path) {
+                return Ok(path);
+            }
+            grants
+                .iter()
+                .filter(|root| path.starts_with(root))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        if parents.iter().any(|root| root.is_dir()) {
             Ok(path)
         } else {
             Err("Select this file or its folder using Import before accessing it.".into())
         }
     }
 
+    pub(super) fn read_connection(&self) -> Result<Connection, String> {
+        let db = Connection::open_with_flags(
+            self.data_dir.join("library.sqlite3"),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .map_err(error)?;
+        db.busy_timeout(Duration::from_secs(5)).map_err(error)?;
+        Ok(db)
+    }
+
     pub(super) fn load_state(&self, db: &Connection) -> Result<LibrarySnapshot, String> {
+        mutations::read_normalized(db, Self::load_configuration(db)?)
+    }
+
+    pub(super) fn load_configuration(db: &Connection) -> Result<LibrarySnapshot, String> {
         let value = db
             .query_row("SELECT data FROM state WHERE id=1", [], |row| {
                 row.get::<_, String>(0)
             })
             .optional()
             .map_err(error)?;
-        let state = match value {
+        match value {
             Some(value) => serde_json::from_str(&value).map_err(|e| {
                 format!("Library state could not be read: {e}. Your database has been preserved.")
             }),
             None => Ok(LibrarySnapshot::default()),
-        }?;
-        mutations::read_normalized(db, state)
+        }
     }
 
     pub fn load(&self) -> Result<LibrarySnapshot, String> {
@@ -321,7 +349,10 @@ pub(super) fn upsert(tx: &Transaction<'_>, track: &LibraryTrack) -> Result<(), S
     let mut track = track.clone();
     track.analysis = None; // Measurements live in their validated, versioned cache.
     let track = &track;
-    let rowid: i64 = tx.query_row("INSERT INTO tracks(id,path,data) VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET path=excluded.path,data=excluded.data RETURNING rowid", params![track.id, track.path, serde_json::to_string(track).map_err(error)?], |row| row.get(0)).map_err(error)?;
+    let rowid: Option<i64> = tx.query_row("INSERT INTO tracks(id,path,data) VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET path=excluded.path,data=excluded.data WHERE tracks.path!=excluded.path OR tracks.data!=excluded.data RETURNING rowid", params![track.id, track.path, serde_json::to_string(track).map_err(error)?], |row| row.get(0)).optional().map_err(error)?;
+    let Some(rowid) = rowid else {
+        return Ok(());
+    };
     tx.execute("DELETE FROM tracks_fts WHERE rowid=?1", [rowid])
         .map_err(error)?;
     tx.execute(

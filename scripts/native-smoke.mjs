@@ -147,6 +147,50 @@ try {
   }, 'native playback');
   await invoke(page, 'set_paused', { paused: true });
   await page.getByRole('button', { name: 'Play', exact: true }).waitFor();
+  const position = page.getByRole('slider', { name: 'Playback position' });
+  const range = await position.boundingBox();
+  assert.ok(range, 'seek control is visible');
+  const beforeDrag = (await invoke(page, 'get_audio_info')).current_time;
+  const cursorY = range.y + range.height / 2;
+  await page.mouse.move(range.x + range.width * 0.15, cursorY);
+  await page.mouse.down();
+  await page.mouse.move(range.x + range.width * 0.48, cursorY, { steps: 8 });
+  assert.ok(
+    Math.abs((await invoke(page, 'get_audio_info')).current_time - beforeDrag) < 0.25,
+    'drag previews without seeking',
+  );
+  await page.mouse.up();
+  await waitFor(async () => {
+    const time = (await invoke(page, 'get_audio_info')).current_time;
+    return time >= 11 && time <= 18;
+  }, 'drag commits the requested seek position');
+
+  await page.getByRole('button', { name: 'Open equalizer', exact: true }).click();
+  const eq = page.getByRole('dialog', { name: 'Equalizer' });
+  await eq.getByRole('slider', { name: '64 Hz', exact: true }).press('ArrowUp');
+  assert.equal(await eq.getByRole('switch', { name: 'Enable equalizer' }).getAttribute('aria-checked'), 'true');
+  await waitFor(
+    async () => (await invoke(page, 'get_audio_info')).is_purist === false,
+    'equalizer enabled in native audio',
+  );
+  await eq.getByRole('button', { name: 'Parametric', exact: true }).click();
+  await eq.getByRole('combobox', { name: 'Filter 1 type', exact: true }).selectOption('peak');
+  for (const [field, value] of [
+    ['frequency', '700'],
+    ['Q', '3'],
+    ['gain', '6'],
+  ]) {
+    const control = eq.getByRole('spinbutton', { name: `Filter 1 ${field}`, exact: true });
+    await control.fill(value);
+    await control.press('Enter');
+  }
+  await waitFor(async () => {
+    const info = await invoke(page, 'get_audio_info');
+    return info.eq_mode === 'parametric' && Math.abs(info.eq_preamp_db + 6) < 0.15;
+  }, 'parametric settings and headroom applied to the render pipeline');
+  await eq.getByText('Applied preamp -6.0 dB', { exact: false }).waitFor();
+  await eq.screenshot({ path: join(artifacts, 'parametric-eq.png') });
+  await eq.getByRole('button', { name: 'Close equalizer' }).click();
   await page.getByRole('button', { name: 'Toggle favorite', exact: true }).click();
   await page.getByRole('button', { name: 'Go to Playlist page' }).click();
   await page.getByLabel('Playlist name').fill('Native durable playlist');
@@ -180,7 +224,10 @@ try {
     await waitFor(async () => (await invoke(page, 'get_audio_info')).is_playing === playing, `${event} transport`);
   }
   await invoke(page, 'plugin:event|emit', { event: 'media_position', payload: 5 });
-  await waitFor(async () => (await invoke(page, 'get_audio_info')).current_time >= 5, 'remote seek');
+  await waitFor(async () => {
+    const time = (await invoke(page, 'get_audio_info')).current_time;
+    return Math.abs(time - 5) < 0.25;
+  }, 'remote seek');
   await close(page);
   page = await start([]);
   const restored = await waitFor(async () => {
@@ -196,6 +243,9 @@ try {
     identifier,
     checks: [
       'native file import/playback',
+      'seek drag preview and one native seek',
+      'equalizer UI activates native DSP',
+      'parametric response matches applied render preamp',
       'paused favorite and playlist persistence',
       'paged catalog UI search',
       'local analysis and cache retrieval',

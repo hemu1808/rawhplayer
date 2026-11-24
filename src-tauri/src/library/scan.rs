@@ -15,31 +15,48 @@ impl NativeLibrary {
             .try_lock()
             .ok_or_else(|| "Another library scan is running.".to_string())?;
         self.cancel_scan.store(false, Ordering::Relaxed);
+        self.import_scopes(paths, progress)
+    }
+
+    fn import_scopes(
+        &self,
+        paths: Vec<String>,
+        progress: impl Fn(ScanProgress),
+    ) -> Result<Vec<LibraryTrack>, String> {
         let mut files = Vec::new();
         let mut seen = HashSet::new();
         for path in paths {
             let root = self.authorize_path(&path)?;
             self.collect_files(&root, &root, 0, &mut seen, &mut files)?;
         }
-        let existing = self.load()?.tracks;
+        let existing = {
+            let db = self.read_connection()?;
+            let mut query = db.prepare("SELECT data FROM tracks").map_err(error)?;
+            let rows = query
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(error)?;
+            rows.map(|row| serde_json::from_str(&row.map_err(error)?).map_err(error))
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let total = existing.len();
+        self.import_files(files, existing, total, progress)
+    }
+
+    fn import_files(
+        &self,
+        files: Vec<PathBuf>,
+        existing: Vec<LibraryTrack>,
+        track_count: usize,
+        progress: impl Fn(ScanProgress),
+    ) -> Result<Vec<LibraryTrack>, String> {
         let mut budget =
             ImportBudget::new(existing.iter().map(|track| track.id.clone()), MAX_TRACKS);
+        budget.total = track_count;
         let by_path: HashMap<_, _> = existing
-            .iter()
-            .map(|track| (path_key(&track.path), track.clone()))
+            .into_iter()
+            .map(|track| (path_key(&track.path), track))
             .collect();
-        let mut missing_by_fingerprint: HashMap<String, Vec<LibraryTrack>> = HashMap::new();
-        for track in existing
-            .iter()
-            .filter(|track| !Path::new(&track.path).is_file())
-        {
-            if let Some(fingerprint) = &track.fingerprint {
-                missing_by_fingerprint
-                    .entry(fingerprint.clone())
-                    .or_default()
-                    .push(track.clone());
-            }
-        }
+        let mut relocated = HashSet::new();
         let mut imported = Vec::new();
         let total = files.len();
         let mut skipped = 0;
@@ -49,21 +66,16 @@ impl NativeLibrary {
             }
             match self.read_track(&path) {
                 Ok(mut track) => {
-                    let previous = by_path.get(&path_key(&track.path)).cloned().or_else(|| {
-                        track
-                            .fingerprint
-                            .as_ref()
-                            .and_then(|key| missing_by_fingerprint.get_mut(key))
-                            .and_then(|matches| {
-                                if matches.len() == 1 {
-                                    matches.pop()
-                                } else {
-                                    None
-                                }
-                            })
-                    });
+                    let previous = match by_path.get(&path_key(&track.path)) {
+                        Some(previous) => Some(previous.clone()),
+                        None if track_count > 0 => {
+                            self.find_relocated_track(&track, &mut relocated)?
+                        }
+                        None => None,
+                    };
                     if let Some(previous) = previous {
                         track.id = previous.id;
+                        budget.ids.insert(track.id.clone());
                         track.is_liked = previous.is_liked;
                         track.play_count = previous.play_count;
                         track.listening_seconds = previous.listening_seconds;
@@ -114,6 +126,40 @@ impl NativeLibrary {
             cancelled: self.cancel_scan.load(Ordering::Relaxed),
         });
         Ok(imported)
+    }
+
+    fn find_relocated_track(
+        &self,
+        track: &LibraryTrack,
+        relocated: &mut HashSet<String>,
+    ) -> Result<Option<LibraryTrack>, String> {
+        let Some(fingerprint) = &track.fingerprint else {
+            return Ok(None);
+        };
+        let candidates = {
+            let db = self.db.lock();
+            let mut query = db
+                .prepare_cached(
+                    "SELECT data FROM tracks WHERE json_extract(data,'$.fingerprint')=?1",
+                )
+                .map_err(error)?;
+            let rows = query
+                .query_map([fingerprint], |row| row.get::<_, String>(0))
+                .map_err(error)?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(error)?
+        };
+        let mut found = None;
+        for data in candidates {
+            let candidate: LibraryTrack = serde_json::from_str(&data).map_err(error)?;
+            if Path::new(&candidate.path).is_file() {
+                continue;
+            }
+            if found.is_some() {
+                return Ok(None);
+            }
+            found = Some(candidate);
+        }
+        Ok(found.filter(|candidate| relocated.insert(candidate.id.clone())))
     }
 
     fn collect_files(
@@ -239,38 +285,155 @@ impl NativeLibrary {
     }
 
     pub fn reconcile(&self, progress: impl Fn(ScanProgress)) -> Result<LibrarySnapshot, String> {
-        let snapshot = self.load()?;
-        let roots: Vec<String> = snapshot
-            .watched_folders
+        self.reconcile_watched(progress)?;
+        self.load()
+    }
+
+    pub(crate) fn reconcile_watched(&self, progress: impl Fn(ScanProgress)) -> Result<(), String> {
+        let _scan = self
+            .scan_lock
+            .try_lock()
+            .ok_or("Another library scan is running.")?;
+        self.cancel_scan.store(false, Ordering::Relaxed);
+        let roots: Vec<String> = self
+            .watched_folders()?
             .iter()
             .filter(|path| Path::new(path).is_dir())
             .cloned()
             .collect();
         if !roots.is_empty() {
-            self.import_with_progress(roots, progress)?;
+            self.import_scopes(roots, progress)?;
         }
-        let mut db = self.db.lock();
-        let mut snapshot = self.load_state(&db)?;
-        {
-            let mut statement = db
-                .prepare("SELECT data FROM tracks ORDER BY rowid")
+        let paths = {
+            let db = self.read_connection()?;
+            let mut statement = db.prepare("SELECT id,path FROM tracks").map_err(error)?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
                 .map_err(error)?;
-            snapshot.tracks = statement
-                .query_map([], |row| row.get::<_, String>(0))
-                .map_err(error)?
-                .map(|row| serde_json::from_str(&row.map_err(error)?).map_err(error))
-                .collect::<Result<_, _>>()?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(error)?
+        };
+        self.refresh_availability(paths)
+    }
+
+    pub(crate) fn reconcile_paths(
+        &self,
+        paths: &HashSet<PathBuf>,
+        progress: impl Fn(ScanProgress),
+    ) -> Result<(), String> {
+        let _scan = self
+            .scan_lock
+            .try_lock()
+            .ok_or("Another library scan is running.")?;
+        self.cancel_scan.store(false, Ordering::Relaxed);
+        let roots: Vec<_> = self
+            .watched_folders()?
+            .iter()
+            .map(|path| path_key(path))
+            .collect();
+        let in_scope = |path: &Path| {
+            let key = path_key(&path_string(path));
+            roots.iter().any(|root| Path::new(&key).starts_with(root))
+        };
+        let mut files = Vec::new();
+        let mut seen = HashSet::new();
+        let mut affected = HashMap::new();
+        let db = self.read_connection()?;
+        for path in paths.iter().filter(|path| in_scope(path)) {
+            if let Ok(canonical) = self.authorize_path(&path_string(path)) {
+                if in_scope(&canonical) {
+                    self.collect_files(&canonical, &canonical, 0, &mut seen, &mut files)?;
+                }
+            }
+            for track in Self::tracks_under(&db, path)? {
+                affected.insert(track.id.clone(), track);
+            }
         }
-        let tx = db.transaction().map_err(error)?;
-        for track in &mut snapshot.tracks {
-            track.missing = self
-                .authorize_path(&track.path)
-                .map(|path| !path.is_file())
-                .unwrap_or(true);
-            upsert(&tx, track)?;
+        let availability = affected
+            .values()
+            .map(|track| (track.id.clone(), track.path.clone()))
+            .collect();
+        if !files.is_empty() {
+            let track_count = self
+                .db
+                .lock()
+                .query_row("SELECT count(*) FROM tracks", [], |row| row.get(0))
+                .map_err(error)?;
+            self.import_files(
+                files,
+                affected.into_values().collect(),
+                track_count,
+                progress,
+            )?;
         }
-        tx.commit().map_err(error)?;
-        Ok(snapshot)
+        self.refresh_availability(availability)
+    }
+
+    fn tracks_under(db: &Connection, path: &Path) -> Result<Vec<LibraryTrack>, String> {
+        use std::path::MAIN_SEPARATOR;
+        let mut paths = vec![path_string(path)];
+        #[cfg(windows)]
+        {
+            let key = path_key(&paths[0]);
+            let canonical = if let Some(network) = key.strip_prefix(r"\\") {
+                format!(r"\\?\UNC\{network}")
+            } else {
+                format!(r"\\?\{key}")
+            };
+            paths.extend([key, canonical]);
+        }
+        paths.sort_unstable();
+        paths.dedup();
+        let collate = if cfg!(windows) { " COLLATE NOCASE" } else { "" };
+        let mut query = db.prepare_cached(&format!(
+            "SELECT data FROM tracks WHERE path{collate}=?1 OR (path{collate}>=?2 AND path{collate}<?3)"
+        )).map_err(error)?;
+        let mut tracks = Vec::new();
+        for path in paths {
+            let base = path.trim_end_matches(MAIN_SEPARATOR);
+            let lower = format!("{base}{MAIN_SEPARATOR}");
+            let upper = format!(
+                "{base}{}",
+                char::from_u32(MAIN_SEPARATOR as u32 + 1).unwrap()
+            );
+            let rows = query
+                .query_map(params![path, lower, upper], |row| row.get::<_, String>(0))
+                .map_err(error)?;
+            for data in rows {
+                tracks.push(serde_json::from_str(&data.map_err(error)?).map_err(error)?);
+            }
+        }
+        Ok(tracks)
+    }
+
+    fn refresh_availability(&self, paths: Vec<(String, String)>) -> Result<(), String> {
+        for batch in paths.chunks(100) {
+            if self.cancel_scan.load(Ordering::Relaxed) {
+                break;
+            }
+            // Drive and permission checks can block. Keep them outside SQLite.
+            let availability = batch
+                .iter()
+                .map(|(id, path)| {
+                    let missing = self
+                        .authorize_path(path)
+                        .map(|path| !path.is_file())
+                        .unwrap_or(true);
+                    (id, path, if missing { "true" } else { "false" })
+                })
+                .collect::<Vec<_>>();
+            let mut db = self.db.lock();
+            let tx = db.transaction().map_err(error)?;
+            {
+                let mut update = tx.prepare_cached("UPDATE tracks SET data=json_set(data,'$.missing',json(?3)) WHERE id=?1 AND path=?2 AND coalesce(json_extract(data,'$.missing'),0)!=json_extract(?3,'$')").map_err(error)?;
+                for (id, path, missing) in availability {
+                    update.execute(params![id, path, missing]).map_err(error)?;
+                }
+            }
+            tx.commit().map_err(error)?;
+        }
+        Ok(())
     }
 
     pub fn cancel(&self) {
@@ -295,8 +458,7 @@ impl NativeLibrary {
     }
 
     pub fn watched_folders(&self) -> Result<Vec<String>, String> {
-        self.load_state(&self.db.lock())
-            .map(|state| state.watched_folders)
+        Self::load_configuration(&self.db.lock()).map(|state| state.watched_folders)
     }
 
     fn update_watched_folders(

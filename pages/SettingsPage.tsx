@@ -8,16 +8,14 @@ import { SoftwareUpdates } from '../components/SoftwareUpdates';
 import { LibraryMaintenance } from '../components/LibraryMaintenance';
 import { AudioAnalysis } from '../components/AudioAnalysis';
 import { saveDeviceProfile } from '../services/deviceProfiles';
+import { SlidersHorizontal } from 'lucide-react';
 
 interface Props {
   currentThemeId: string;
   onThemeChange: (theme: ThemeColor) => void;
   isPuristMode: boolean;
   onTogglePurist: () => void;
-  bufferSize?: number;
-  processingPrecision?: string;
-  onTogglePrecision?: () => void;
-  onBufferSizeChange?: (size: number) => void;
+  onEqualizer: () => void;
 }
 function download(name: string, text: string) {
   const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
@@ -27,7 +25,7 @@ function download(name: string, text: string) {
   anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-export function SettingsPage({ currentThemeId, onThemeChange, isPuristMode, onTogglePurist }: Props) {
+export function SettingsPage({ currentThemeId, onThemeChange, isPuristMode, onTogglePurist, onEqualizer }: Props) {
   const { state: audioState, nativeInfo, refreshAudioInfo } = usePlayer();
   const library = useLibrary();
   const [devices, setDevices] = useState<AudioDevice[]>([]);
@@ -83,7 +81,7 @@ export function SettingsPage({ currentThemeId, onThemeChange, isPuristMode, onTo
   }, []);
   return (
     <ScrollArea title="Settings" subtitle="Playback, library and privacy">
-      <div className="px-8 pb-28 max-w-4xl space-y-6">
+      <div className="settings-stack max-w-4xl space-y-5">
         {notice && (
           <p role="status" className="rounded-xl border border-white/20 p-3">
             {notice}
@@ -93,12 +91,7 @@ export function SettingsPage({ currentThemeId, onThemeChange, isPuristMode, onTo
           <legend>Appearance</legend>
           <div className="flex gap-3 flex-wrap">
             {THEMES.map((theme) => (
-              <button
-                key={theme.id}
-                aria-pressed={theme.id === currentThemeId}
-                onClick={() => onThemeChange(theme)}
-                className="border border-white/20 rounded-lg p-3"
-              >
+              <button key={theme.id} aria-pressed={theme.id === currentThemeId} onClick={() => onThemeChange(theme)} className="button">
                 {theme.name}
               </button>
             ))}
@@ -132,9 +125,14 @@ export function SettingsPage({ currentThemeId, onThemeChange, isPuristMode, onTo
               ))}
             </select>
           </label>
-          <button aria-pressed={isPuristMode} onClick={onTogglePurist} className="border border-white/20 rounded-lg p-3">
-            {isPuristMode ? 'EQ bypassed' : 'Equalizer enabled'}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button className="button" onClick={onEqualizer} aria-haspopup="dialog">
+              <SlidersHorizontal size={16} /> Equalizer
+            </button>
+            <button className="button" aria-pressed={!isPuristMode} onClick={onTogglePurist}>
+              {isPuristMode ? 'EQ bypassed' : 'EQ enabled'}
+            </button>
+          </div>
           <p className="text-sm text-neutral-400">
             Actual output: {nativeInfo?.output_sample_rate ? nativeInfo.output_sample_rate / 1000 + ' kHz' : 'Not connected'} ·{' '}
             {nativeInfo?.output_format || 'Unknown format'}. Audio uses the system mixer.
@@ -202,7 +200,14 @@ export function SettingsPage({ currentThemeId, onThemeChange, isPuristMode, onTo
             ))}
           </ul>
           <div className="flex gap-4 flex-wrap">
-            <button onClick={() => void run(async () => download('rawh-library.json', await library.exportLibrary()))}>
+            <button
+              onClick={() =>
+                void run(async () => {
+                  const text = await library.exportLibrary();
+                  if (text !== null) download('rawh-library.json', text);
+                })
+              }
+            >
               Export library backup
             </button>
             <button onClick={() => void run(library.refreshLibrary)}>Rescan library</button>
@@ -210,24 +215,36 @@ export function SettingsPage({ currentThemeId, onThemeChange, isPuristMode, onTo
               Export diagnostics
             </button>
           </div>
-          <label className="block">
-            Restore backup
-            <input
-              type="file"
-              accept=".json"
-              className="block mt-2"
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (file)
-                  void run(async () => {
-                    if (file.size > 64 * 1024 * 1024) throw new Error('Backup exceeds 64 MB');
-                    await library.restoreLibrary(await file.text());
-                    if (window.__TAURI_INTERNALS__) setWatchedFolders(await invoke<string[]>('get_watched_folders'));
-                  });
-                event.target.value = '';
-              }}
-            />
-          </label>
+          {window.__TAURI_INTERNALS__ ? (
+            <button
+              onClick={() =>
+                void run(async () => {
+                  await library.restoreLibrary();
+                  setWatchedFolders(await invoke<string[]>('get_watched_folders'));
+                })
+              }
+            >
+              Restore backup
+            </button>
+          ) : (
+            <label className="block">
+              Restore backup
+              <input
+                type="file"
+                accept=".json"
+                className="block mt-2"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file)
+                    void run(async () => {
+                      if (file.size > 64 * 1024 * 1024) throw new Error('Backup exceeds 64 MB');
+                      await library.restoreLibrary(await file.text());
+                    });
+                  event.target.value = '';
+                }}
+              />
+            </label>
+          )}
           <p className="text-sm text-neutral-400">
             Backups contain metadata, playlists and file paths. Your audio files remain in their original folders. After restoring on
             another computer, import those folders to grant access.

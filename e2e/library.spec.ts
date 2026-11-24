@@ -23,6 +23,67 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
+test('opens the equalizer at minimum desktop size and keeps multiple visualizers selected', async ({ page }) => {
+  await page.setViewportSize({ width: 800, height: 600 });
+  await page.goto('/');
+  await expect(page).toHaveTitle('RawhPlayer');
+  const wordmark = page.locator('.rawh-wordmark');
+  await expect(wordmark).toHaveText('RAWHPLAYER');
+  const centerOffset = await wordmark.evaluate((element) => {
+    const { x, width } = element.getBoundingClientRect();
+    return Math.abs(x + width / 2 - window.innerWidth / 2);
+  });
+  expect(centerOffset).toBeLessThan(1);
+  const nav = page.getByRole('navigation', { name: 'Main navigation' });
+  const open = nav.getByRole('button', { name: 'Equalizer', exact: true });
+  await open.click();
+  const equalizer = page.getByRole('dialog', { name: 'Equalizer' });
+  await expect(equalizer).toBeVisible();
+  await expect(equalizer.getByRole('slider')).toHaveCount(10);
+  const bass = equalizer.getByRole('slider', { name: '64 Hz', exact: true });
+  await bass.press('ArrowUp');
+  await expect(bass).toHaveAttribute('aria-valuetext', '0.5 dB');
+  await expect(equalizer.getByRole('switch', { name: 'Enable equalizer' })).toBeChecked();
+  await page.keyboard.press('Escape');
+  await expect(equalizer).toHaveCount(0);
+  await expect(open).toBeFocused();
+
+  const options = page.getByRole('group', { name: 'Choose visualizers' });
+  await options.getByRole('button', { name: 'Waveform' }).click();
+  await options.getByRole('button', { name: 'Spectrogram' }).click();
+  await expect(page.locator('.visualizer figure')).toHaveCount(3);
+  await page.reload();
+  await expect(page.locator('.visualizer figure')).toHaveCount(3);
+  await options.getByRole('button', { name: 'Spectrum' }).click();
+  await expect(page.locator('.visualizer figure')).toHaveCount(2);
+});
+
+test('configures and restores parametric settings independently of the graphic EQ', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Open equalizer', exact: true }).click();
+  const eq = page.getByRole('dialog', { name: 'Equalizer' });
+  await eq.getByRole('button', { name: 'Parametric', exact: true }).click();
+  await eq.getByRole('combobox', { name: 'Filter 1 type', exact: true }).selectOption('notch');
+  await expect(eq.getByRole('spinbutton', { name: 'Filter 1 gain', exact: true })).toBeDisabled();
+  const frequency = eq.getByRole('spinbutton', { name: 'Filter 1 frequency', exact: true });
+  await frequency.fill('440');
+  await frequency.press('Enter');
+  await eq.getByRole('button', { name: 'Add filter', exact: true }).click();
+  await expect(eq.getByRole('combobox', { name: 'Filter 6 type', exact: true })).toBeVisible();
+  await eq.getByRole('button', { name: 'Remove filter 6', exact: true }).click();
+  await eq.getByRole('switch', { name: 'Enable filter 1', exact: true }).click();
+  await expect(eq.getByRole('switch', { name: 'Enable filter 1', exact: true })).not.toBeChecked();
+  await eq.getByRole('button', { name: 'Graphic', exact: true }).click();
+  await expect(eq.getByRole('slider')).toHaveCount(10);
+  await eq.getByRole('button', { name: 'Parametric', exact: true }).click();
+  await page.reload();
+  await page.getByRole('button', { name: 'Open equalizer', exact: true }).click();
+  await expect(eq.getByRole('button', { name: 'Parametric', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(frequency).toHaveValue('440');
+  await expect(eq.getByRole('combobox', { name: 'Filter 1 type', exact: true })).toHaveValue('notch');
+  await expect(eq.getByRole('switch', { name: 'Enable filter 1', exact: true })).not.toBeChecked();
+});
+
 test('queue removal preserves library and saved playlist across reload', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
@@ -48,6 +109,7 @@ test('queue removal preserves library and saved playlist across reload', async (
 });
 
 test('keyboard playlist entry does not trigger playback and settings mount', async ({ page }) => {
+  await page.setViewportSize({ width: 800, height: 600 });
   await page.goto('/');
   await page.getByRole('button', { name: 'Go to Playlist page' }).click();
   await page.getByLabel('Playlist name').fill('Space key test');
@@ -56,6 +118,7 @@ test('keyboard playlist entry does not trigger playback and settings mount', asy
   await page.getByRole('button', { name: 'Go to Setup page' }).click();
   await expect(page.getByText('Updates are unavailable in this build.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Check for updates' })).toBeDisabled();
+  await page.getByRole('button', { name: 'Delete key', exact: true }).click({ trial: true });
 });
 
 test('queue suggestions explain their choices and only enqueue after selection', async ({ page }) => {

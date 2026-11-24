@@ -4,45 +4,47 @@ import { useLibrary } from '../context/LibraryContext';
 export function SignalPath() {
   const { nativeInfo: info } = usePlayer();
   const { currentTrack } = useLibrary();
+  const rate = (value?: number | null) => (value ? `${value / 1000} kHz` : 'Unknown sample rate');
+
   return (
-    <section aria-label="Audio signal path" className="rounded-2xl border border-white/10 p-5 m-5 text-sm">
-      <h2 className="font-semibold mb-3">Your signal path</h2>
+    <section aria-label="Audio signal path" className="signal-path">
+      <h2>Signal path</h2>
       <ol className="grid grid-cols-3 gap-4">
         <li>
-          <p className="text-neutral-400">Source</p>
+          <h3>Source</h3>
           <p>{currentTrack?.format || 'No track'}</p>
-          <p>
-            {info?.sample_rate ? `${info.sample_rate / 1000} kHz` : 'Rate unknown'} · {info?.bit_depth || 'Unknown'} bit
-          </p>
+          {info?.sample_rate ? (
+            <p>
+              {rate(info.sample_rate)}
+              {info.bit_depth ? ` · ${info.bit_depth}-bit` : ''}
+            </p>
+          ) : null}
         </li>
         <li>
-          <p className="text-neutral-400">Processing</p>
-          <p>{info?.is_purist ? 'EQ bypassed' : 'Equalizer'}</p>
-          <p>{info?.resampler || 'Conversion status unavailable'}</p>
-          <p>
-            {info?.normalization || 'off'} ReplayGain · {info?.playback_rate || 1}×
-          </p>
+          <h3>Processing</h3>
+          {info?.resampler ? <p>{info.resampler}</p> : <p>Waiting for playback</p>}
+          {info && (
+            <p>
+              {info.is_purist ? 'EQ bypassed' : info.eq_mode === 'parametric' ? 'Parametric EQ' : 'Graphic EQ'} · {info.playback_rate || 1}×
+            </p>
+          )}
         </li>
         <li>
-          <p className="text-neutral-400">Output</p>
+          <h3>Output</h3>
           <p>{info?.device_name || 'System default'}</p>
-          <p>
-            {info?.output_sample_rate ? `${info.output_sample_rate / 1000} kHz` : 'Rate unknown'} ·{' '}
-            {info?.output_format || 'Format unknown'}
-          </p>
+          {info?.output_sample_rate ? (
+            <p>
+              {rate(info.output_sample_rate)} · {info.output_format}
+            </p>
+          ) : null}
         </li>
       </ol>
-      <p className="text-neutral-400 mt-3">
-        {info?.sample_rate && info.output_sample_rate
-          ? info.sample_rate === info.output_sample_rate
-            ? 'Sample rates match.'
-            : 'Sample rate conversion is active.'
-          : 'Play a track to inspect the output.'}{' '}
-        System audio mixer enabled.
-      </p>
-      <p className="text-neutral-400 mt-2">
-        Clipping: {info?.clipping_count || 0} · Buffer underruns: {info?.underrun_count || 0}
-      </p>
+      <div className="signal-path-summary">
+        <span>Clipped samples {info?.clipping_count || 0}</span>
+        <span>Buffer underruns {info?.underrun_count || 0}</span>
+        <span>ReplayGain {info?.normalization || 'off'}</span>
+        {info && !info.is_purist && <span>EQ preamp {info.eq_preamp_db.toFixed(1)} dB</span>}
+      </div>
     </section>
   );
 }

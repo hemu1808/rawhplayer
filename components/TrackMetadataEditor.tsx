@@ -65,7 +65,7 @@ export function TrackMetadataEditor({ track, onClose }: { track: Track; onClose:
         if (busy) event.preventDefault();
         else onClose();
       }}
-      className="bg-neutral-950 text-white border border-white/20 rounded-2xl p-6 w-[32rem] max-w-[95vw] backdrop:bg-black/70"
+      className="metadata-dialog text-white rounded-2xl p-6 w-[32rem] max-w-[95vw]"
     >
       <h2 id="metadata-title" className="text-xl mb-3">
         Edit track metadata
@@ -99,13 +99,13 @@ export function TrackMetadataEditor({ track, onClose }: { track: Track; onClose:
         {!editable && <p>Open an available local file in the desktop app to edit its tags.</p>}
         {message && <p role="status">{message}</p>}
         <div className="flex gap-4 pt-3">
-          <button disabled={busy || !editable} type="submit">
+          <button className="button button--primary" disabled={busy || !editable} type="submit">
             Save tags
           </button>
-          <button disabled={busy || !editable} type="button" onClick={() => void apply(true)}>
+          <button className="button" disabled={busy || !editable} type="button" onClick={() => void apply(true)}>
             Undo last edit
           </button>
-          <button disabled={busy} type="button" onClick={onClose}>
+          <button className="button" disabled={busy} type="button" onClick={onClose}>
             Close editor
           </button>
         </div>
